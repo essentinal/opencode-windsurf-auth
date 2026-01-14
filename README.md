@@ -1,6 +1,13 @@
-# opencode-windsurf-auth
+# opencode-windsurf-codeium
 
 OpenCode plugin for Windsurf/Codeium authentication - use Windsurf models in OpenCode.
+
+## Features
+
+- OpenAI-compatible `/v1/chat/completions` interface with streaming SSE
+- Automatic credential discovery (CSRF token, port, API key)
+- Transparent REST↔gRPC translation over HTTP/2
+- Zero extra auth prompts when Windsurf is running
 
 ## Overview
 
@@ -13,20 +20,27 @@ This plugin enables OpenCode users to access Windsurf/Codeium models by leveragi
 3. **gRPC Communication**: Sends requests to `localhost:{port}` using HTTP/2 gRPC protocol
 4. **Response Transformation**: Converts gRPC responses to OpenAI-compatible SSE format
 
-### Supported Models (90+)
+### Supported Models (canonical names)
 
-| Category | Models |
-|----------|--------|
-| **SWE** | `swe-1.5`, `swe-1.5-thinking` |
-| **Claude** | `claude-3.5-sonnet`, `claude-3.7-sonnet`, `claude-4-opus`, `claude-4-sonnet`, `claude-4.5-sonnet`, `claude-4.5-opus`, `claude-code` |
-| **GPT** | `gpt-4o`, `gpt-4.5`, `gpt-4.1`, `gpt-5`, `gpt-5.2`, `gpt-5-codex` |
-| **O-Series** | `o1`, `o3`, `o3-mini`, `o3-pro`, `o4-mini` |
-| **Gemini** | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.0-pro` |
-| **DeepSeek** | `deepseek-v3`, `deepseek-r1`, `deepseek-r1-fast` |
-| **Llama** | `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.1-405b`, `llama-3.3-70b` |
-| **Qwen** | `qwen-2.5-72b`, `qwen-3-235b`, `qwen-3-coder-480b` |
-| **Grok** | `grok-2`, `grok-3`, `grok-code-fast` |
-| **Other** | `mistral-7b`, `kimi-k2`, `glm-4.5`, `minimax-m2` |
+**Claude**: `claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`, `claude-3.5-sonnet`, `claude-3.5-haiku`, `claude-3.7-sonnet`, `claude-3.7-sonnet-thinking`, `claude-4-opus`, `claude-4-opus-thinking`, `claude-4-sonnet`, `claude-4-sonnet-thinking`, `claude-4.1-opus`, `claude-4.1-opus-thinking`, `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking`, `claude-4.5-opus`, `claude-4.5-opus-thinking`, `claude-code`.
+
+**OpenAI GPT**: `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-nano`, `gpt-5-low`, `gpt-5-high`, `gpt-5-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.2-low`, `gpt-5.2`, `gpt-5.2-high`, `gpt-5.2-xhigh`, `gpt-5.2-priority` (plus the low/high/xhigh priority variants).
+
+**OpenAI O-series**: `o3`, `o3-mini`, `o3-low`, `o3-high`, `o3-pro`, `o3-pro-low`, `o3-pro-high`, `o4-mini`, `o4-mini-low`, `o4-mini-high`.
+
+**Gemini**: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`, `gemini-3.0-pro`, `gemini-3.0-pro-low`, `gemini-3.0-pro-high`, `gemini-3.0-flash`, `gemini-3.0-flash-high`.
+
+**DeepSeek**: `deepseek-v3`, `deepseek-v3-2`, `deepseek-r1`, `deepseek-r1-fast`, `deepseek-r1-slow`.
+
+**Llama**: `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.1-405b`, `llama-3.3-70b`, `llama-3.3-70b-r1`.
+
+**Qwen**: `qwen-2.5-7b`, `qwen-2.5-32b`, `qwen-2.5-72b`, `qwen-2.5-32b-r1`, `qwen-3-235b`, `qwen-3-coder-480b`, `qwen-3-coder-480b-fast`.
+
+**Grok (xAI)**: `grok-2`, `grok-3`, `grok-3-mini`, `grok-code-fast`.
+
+**Specialty & Proprietary**: `mistral-7b`, `kimi-k2`, `kimi-k2-thinking`, `glm-4.5`, `glm-4.5-fast`, `glm-4.6`, `glm-4.6-fast`, `glm-4.7`, `glm-4.7-fast`, `minimax-m2`, `minimax-m2.1`, `swe-1.5`, `swe-1.5-thinking`, `swe-1.5-slow`.
+
+Aliases (e.g., `gpt-5.2-low-priority`) are also accepted.
 
 ## Prerequisites
 
@@ -38,29 +52,38 @@ This plugin enables OpenCode users to access Windsurf/Codeium models by leveragi
 ## Installation
 
 ```bash
-npm install opencode-windsurf-auth
+bun add opencode-windsurf-codeium@beta
 ```
 
-## Usage
+## OpenCode Configuration
 
-Add to your OpenCode configuration (`~/.config/opencode/opencode.json`):
+Add the following to your OpenCode config (typically `~/.config/opencode/config.json`). Pin the plugin if you want the beta tag:
 
 ```json
 {
-  "plugin": ["opencode-windsurf-auth"],
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-windsurf-codeium@beta"],
   "provider": {
     "windsurf": {
       "models": {
-        "claude-4.5-sonnet": {
-          "name": "Claude 4.5 Sonnet (Windsurf)",
-          "limit": { "context": 200000, "output": 64000 }
+        "claude-4.5-opus": {
+          "name": "Claude 4.5 Opus (Windsurf)",
+          "limit": { "context": 200000, "output": 8192 }
+        },
+        "gpt-5.2-xhigh": {
+          "name": "GPT 5.2 XHigh (Windsurf)",
+          "limit": { "context": 128000, "output": 16384 }
+        },
+        "gemini-3.0-pro-high": {
+          "name": "Gemini 3.0 Pro High (Windsurf)",
+          "limit": { "context": 200000, "output": 8192 }
+        },
+        "deepseek-r1": {
+          "name": "DeepSeek R1 (Windsurf)",
+          "limit": { "context": 64000, "output": 8192 }
         },
         "swe-1.5": {
           "name": "SWE 1.5 (Windsurf)",
-          "limit": { "context": 128000, "output": 32000 }
-        },
-        "gpt-5": {
-          "name": "GPT-5 (Windsurf)",
           "limit": { "context": 128000, "output": 32000 }
         }
       }
@@ -69,142 +92,53 @@ Add to your OpenCode configuration (`~/.config/opencode/opencode.json`):
 }
 ```
 
-Then run:
+After saving the config:
 
 ```bash
-opencode run "Hello" --model=windsurf/claude-4.5-sonnet
+bun run build && bun add -g opencode-windsurf-codeium@beta  # local install during development
+opencode models list                                            # confirm models appear under windsurf/
+opencode chat --model=windsurf/claude-4.5-opus "Hello"          # quick smoke test
 ```
 
-## Verification
+Keep Windsurf running and signed in—credentials are fetched live from the IDE process.
 
-To verify the plugin can communicate with Windsurf:
-
-```bash
-# 1. Check Windsurf is running
-ps aux | grep language_server_macos
-
-# 2. Extract credentials manually
-ps aux | grep language_server_macos | grep -oE '\-\-csrf_token\s+[a-f0-9-]+'
-ps aux | grep language_server_macos | grep -oE '\-\-extension_server_port\s+[0-9]+'
-cat ~/.codeium/config.json | grep apiKey
-
-# 3. Test gRPC endpoint (port = extension_server_port + 2)
-curl -X POST http://localhost:{port}/exa.language_server_pb.LanguageServerService/RawGetChatMessage \
-  -H "content-type: application/grpc" \
-  -H "te: trailers" \
-  -H "x-codeium-csrf-token: YOUR_TOKEN" \
-  --data-binary ""
-```
-
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────────┐
-│   OpenCode      │────▶│  Windsurf Plugin │────▶│  language_server    │
-│   (requests)    │     │  (transform)     │     │  (local gRPC)       │
-└─────────────────┘     └──────────────────┘     └─────────────────────┘
-                               │
-                               ▼
-                        ┌──────────────────┐
-                        │  ~/.codeium/     │
-                        │  config.json     │
-                        │  (API key)       │
-                        └──────────────────┘
-```
-
-### File Structure
+## Project Layout
 
 ```
 src/
-├── plugin.ts              # Main plugin, OpenAI-compatible fetch handler
-├── constants.ts           # Plugin ID, gRPC service names
+├── plugin.ts              # Fetch interceptor that routes to Windsurf
+├── constants.ts           # gRPC service metadata
 └── plugin/
-    ├── auth.ts            # Credential discovery from process args
-    ├── grpc-client.ts     # HTTP/2 gRPC client with protobuf encoding
-    ├── models.ts          # Model name → enum mappings
-    └── types.ts           # TypeScript types, ModelEnum values
+    ├── auth.ts            # Credential discovery
+    ├── grpc-client.ts     # Streaming chat bridge
+    ├── models.ts          # Model lookup tables
+    └── types.ts           # Shared enums/types
 ```
 
 ## Development
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Build
-npm run build
+bun run build
 
 # Type check
-npm run typecheck
+bun run typecheck
 
 # Run tests
-npm test
+bun test
 ```
 
-## How It Works (Technical Details)
+## Publishing (beta tag)
 
-### 1. Credential Discovery
+1. **Bump the version** – e.g., `0.2.0-beta.1` in `package.json`.
+2. **Authenticate** – `npm login` (enables Bun to reuse the stored token/2FA).
+3. **Build & verify** – `bun run build && bun test`.
+4. **Publish** – `bun publish --tag beta --access public`.
 
-The plugin discovers credentials from the running Windsurf process:
-
-```bash
-# Process args contain:
---csrf_token abc123-def456-...
---extension_server_port 42100
---windsurf_version 1.13.104
-```
-
-The gRPC port is `extension_server_port + 2`.
-
-### 2. Protobuf Encoding
-
-Requests are manually encoded to protobuf format (no protobuf library needed):
-
-```typescript
-// Encode a string field (wire type 2)
-function encodeString(fieldNum: number, str: string): number[] {
-  const strBytes = Buffer.from(str, 'utf8');
-  return [(fieldNum << 3) | 2, ...encodeVarint(strBytes.length), ...strBytes];
-}
-```
-
-### 3. Model Enum Values
-
-Model names are mapped to protobuf enum values extracted from Windsurf's `extension.js`:
-
-```typescript
-const ModelEnum = {
-  CLAUDE_4_5_SONNET: 353,
-  CLAUDE_4_5_OPUS: 391,
-  GPT_5: 340,
-  SWE_1_5: 359,
-  // ... 80+ more
-};
-```
-
-### 4. gRPC Service
-
-Requests go to the local language server:
-
-```
-POST http://localhost:{port}/exa.language_server_pb.LanguageServerService/RawGetChatMessage
-Headers:
-  content-type: application/grpc
-  te: trailers
-  x-codeium-csrf-token: {csrf_token}
-```
-
-## Reverse Engineering Notes
-
-The model enum values were extracted from:
-```
-/Applications/Windsurf.app/Contents/Resources/app/extensions/windsurf/dist/extension.js
-```
-
-To discover new models:
-```bash
-grep -oE '[A-Z0-9_]+\s*=\s*[0-9]+' extension.js | grep -E 'CLAUDE|GPT|GEMINI|DEEPSEEK'
-```
+Consumers can pin the beta via `bun add opencode-windsurf-codeium@beta`.
 
 ## Known Limitations
 
@@ -213,9 +147,11 @@ grep -oE '[A-Z0-9_]+\s*=\s*[0-9]+' extension.js | grep -E 'CLAUDE|GPT|GEMINI|DEE
 - **Response parsing** - Uses heuristic text extraction from protobuf (may miss edge cases)
 - **No tool calling yet** - Basic chat completion only
 
-## Related Projects
+## Further Reading
 
-- [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) - Similar plugin for Google's Antigravity API
+- `docs/WINDSURF_API_SPEC.md` – gRPC endpoints & protobuf notes
+- `docs/REVERSE_ENGINEERING.md` – credential discovery + tooling
+- [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) – related project
 
 ## License
 
