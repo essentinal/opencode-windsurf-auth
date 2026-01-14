@@ -131,15 +131,6 @@ bun run typecheck
 bun test
 ```
 
-## Publishing (beta tag)
-
-1. **Bump the version** – e.g., `0.2.0-beta.1` in `package.json`.
-2. **Authenticate** – `npm login` (enables Bun to reuse the stored token/2FA).
-3. **Build & verify** – `bun run build && bun test`.
-4. **Publish** – `bun publish --tag beta --access public`.
-
-Consumers can pin the beta via `bun add opencode-windsurf-codeium@beta`.
-
 ## Known Limitations
 
 - **Windsurf must be running** - The plugin communicates with the local language server
