@@ -13,35 +13,6 @@ OpenCode plugin for Windsurf/Codeium authentication - use Windsurf models in Ope
 
 This plugin enables OpenCode users to access Windsurf/Codeium models by leveraging their existing Windsurf installation. It communicates directly with the **local Windsurf language server** via gRPC - no network traffic capture or OAuth flows required.
 
-### How It Works
-
-1. **Credential Discovery**: Extracts CSRF token and port from the running `language_server_macos` process
-2. **API Key**: Reads from `~/.codeium/config.json`
-3. **gRPC Communication**: Sends requests to `localhost:{port}` using HTTP/2 gRPC protocol
-4. **Response Transformation**: Converts gRPC responses to OpenAI-compatible SSE format
-
-### Supported Models (canonical names)
-
-**Claude**: `claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`, `claude-3.5-sonnet`, `claude-3.5-haiku`, `claude-3.7-sonnet`, `claude-3.7-sonnet-thinking`, `claude-4-opus`, `claude-4-opus-thinking`, `claude-4-sonnet`, `claude-4-sonnet-thinking`, `claude-4.1-opus`, `claude-4.1-opus-thinking`, `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking`, `claude-4.5-opus`, `claude-4.5-opus-thinking`, `claude-code`.
-
-**OpenAI GPT**: `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-nano`, `gpt-5-low`, `gpt-5-high`, `gpt-5-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.2-low`, `gpt-5.2`, `gpt-5.2-high`, `gpt-5.2-xhigh`, `gpt-5.2-priority` (plus the low/high/xhigh priority variants).
-
-**OpenAI O-series**: `o3`, `o3-mini`, `o3-low`, `o3-high`, `o3-pro`, `o3-pro-low`, `o3-pro-high`, `o4-mini`, `o4-mini-low`, `o4-mini-high`.
-
-**Gemini**: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`, `gemini-3.0-pro`, `gemini-3.0-pro-low`, `gemini-3.0-pro-high`, `gemini-3.0-flash`, `gemini-3.0-flash-high`.
-
-**DeepSeek**: `deepseek-v3`, `deepseek-v3-2`, `deepseek-r1`, `deepseek-r1-fast`, `deepseek-r1-slow`.
-
-**Llama**: `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.1-405b`, `llama-3.3-70b`, `llama-3.3-70b-r1`.
-
-**Qwen**: `qwen-2.5-7b`, `qwen-2.5-32b`, `qwen-2.5-72b`, `qwen-2.5-32b-r1`, `qwen-3-235b`, `qwen-3-coder-480b`, `qwen-3-coder-480b-fast`.
-
-**Grok (xAI)**: `grok-2`, `grok-3`, `grok-3-mini`, `grok-code-fast`.
-
-**Specialty & Proprietary**: `mistral-7b`, `kimi-k2`, `kimi-k2-thinking`, `glm-4.5`, `glm-4.5-fast`, `glm-4.6`, `glm-4.6-fast`, `glm-4.7`, `glm-4.7-fast`, `minimax-m2`, `minimax-m2.1`, `swe-1.5`, `swe-1.5-thinking`, `swe-1.5-slow`.
-
-Aliases (e.g., `gpt-5.2-low-priority`) are also accepted.
-
 ## Prerequisites
 
 1. **Windsurf IDE installed** - Download from [windsurf.com](https://windsurf.com)
@@ -114,6 +85,35 @@ src/
     ├── models.ts          # Model lookup tables
     └── types.ts           # Shared enums/types
 ```
+
+### How It Works
+
+1. **Credential Discovery**: Extracts CSRF token and port from the running `language_server_macos` process
+2. **API Key**: Reads from `~/.codeium/config.json`
+3. **gRPC Communication**: Sends requests to `localhost:{port}` using HTTP/2 gRPC protocol
+4. **Response Transformation**: Converts gRPC responses to OpenAI-compatible SSE format
+
+### Supported Models (canonical names)
+
+**Claude**: `claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`, `claude-3.5-sonnet`, `claude-3.5-haiku`, `claude-3.7-sonnet`, `claude-3.7-sonnet-thinking`, `claude-4-opus`, `claude-4-opus-thinking`, `claude-4-sonnet`, `claude-4-sonnet-thinking`, `claude-4.1-opus`, `claude-4.1-opus-thinking`, `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking`, `claude-4.5-opus`, `claude-4.5-opus-thinking`, `claude-code`.
+
+**OpenAI GPT**: `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-nano`, `gpt-5-low`, `gpt-5-high`, `gpt-5-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.2-low`, `gpt-5.2`, `gpt-5.2-high`, `gpt-5.2-xhigh`, `gpt-5.2-priority` (plus the low/high/xhigh priority variants).
+
+**OpenAI O-series**: `o3`, `o3-mini`, `o3-low`, `o3-high`, `o3-pro`, `o3-pro-low`, `o3-pro-high`, `o4-mini`, `o4-mini-low`, `o4-mini-high`.
+
+**Gemini**: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`, `gemini-3.0-pro`, `gemini-3.0-pro-low`, `gemini-3.0-pro-high`, `gemini-3.0-flash`, `gemini-3.0-flash-high`.
+
+**DeepSeek**: `deepseek-v3`, `deepseek-v3-2`, `deepseek-r1`, `deepseek-r1-fast`, `deepseek-r1-slow`.
+
+**Llama**: `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.1-405b`, `llama-3.3-70b`, `llama-3.3-70b-r1`.
+
+**Qwen**: `qwen-2.5-7b`, `qwen-2.5-32b`, `qwen-2.5-72b`, `qwen-2.5-32b-r1`, `qwen-3-235b`, `qwen-3-coder-480b`, `qwen-3-coder-480b-fast`.
+
+**Grok (xAI)**: `grok-2`, `grok-3`, `grok-3-mini`, `grok-code-fast`.
+
+**Specialty & Proprietary**: `mistral-7b`, `kimi-k2`, `kimi-k2-thinking`, `glm-4.5`, `glm-4.5-fast`, `glm-4.6`, `glm-4.6-fast`, `glm-4.7`, `glm-4.7-fast`, `minimax-m2`, `minimax-m2.1`, `swe-1.5`, `swe-1.5-thinking`, `swe-1.5-slow`.
+
+Aliases (e.g., `gpt-5.2-low-priority`) are also accepted.
 
 ## Development
 
