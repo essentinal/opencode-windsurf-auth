@@ -14,10 +14,14 @@
   "files": [
     "dist"
   ],
+  "packageManager": "bun@1.2.14",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "build": "bun run tsc -p tsconfig.build.json",
+    "typecheck": "bun run tsc --noEmit",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit",
+    "test:request": "bun run tests/live/request.ts",
+    "test:analyze": "bun run tests/live/analyze.ts",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -41,10 +45,10 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^0.15.30",
+    "@types/bun": "^1.3.6",
     "@types/node": "^22.0.0",
     "@types/proper-lockfile": "^4.1.4",
-    "typescript": "^5.7.0",
-    "vitest": "^2.0.0"
+    "typescript": "^5.7.0"
   },
   "peerDependencies": {
     "typescript": "^5"

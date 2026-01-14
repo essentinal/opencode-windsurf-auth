@@ -21,5 +21,7 @@ npm-debug.log*
 # Test
 coverage/
 
-# Captures (mitmproxy flow files)
+# Traffic captures
 captures/
+tests/fixtures/
+*.pcap

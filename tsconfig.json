@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
+    "types": ["bun-types"],
     "outDir": "./dist",
     "rootDir": ".",
     "strict": true,
@@ -21,5 +22,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["index.ts", "src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "tests/**/*"]
 }
