@@ -57,8 +57,7 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'claude-4-5-sonnet': ModelEnum.CLAUDE_4_5_SONNET,
   'claude-4.5-sonnet-thinking': ModelEnum.CLAUDE_4_5_SONNET_THINKING,
   'claude-4-5-sonnet-thinking': ModelEnum.CLAUDE_4_5_SONNET_THINKING,
-  'claude-4.5-sonnet-1m': ModelEnum.CLAUDE_4_5_SONNET_1M,
-  'claude-4-5-sonnet-1m': ModelEnum.CLAUDE_4_5_SONNET_1M,
+  // NOTE: claude-4.5-sonnet-1m is defined in enum but not available via API
   
   'claude-4.5-opus': ModelEnum.CLAUDE_4_5_OPUS,
   'claude-4-5-opus': ModelEnum.CLAUDE_4_5_OPUS,
@@ -79,8 +78,7 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'gpt-4o-mini': ModelEnum.GPT_4O_MINI_2024_07_18,
   'gpt-4o-mini-2024-07-18': ModelEnum.GPT_4O_MINI_2024_07_18,
   
-  'gpt-4.5': ModelEnum.GPT_4_5,
-  'gpt-4-5': ModelEnum.GPT_4_5,
+  // NOTE: gpt-4.5 is defined in enum but not available via API
   
   'gpt-4.1': ModelEnum.GPT_4_1_2025_04_14,
   'gpt-4-1': ModelEnum.GPT_4_1_2025_04_14,
@@ -125,11 +123,8 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
 
   // ============================================================================
   // O-Series (OpenAI Reasoning)
+  // NOTE: o1, o1-mini, o1-preview are deprecated - use o3/o4 series instead
   // ============================================================================
-  'o1': ModelEnum.O1,
-  'o1-mini': ModelEnum.O1_MINI,
-  'o1-preview': ModelEnum.O1_PREVIEW,
-  
   'o3': ModelEnum.O3,
   'o3-mini': ModelEnum.O3_MINI,
   'o3-low': ModelEnum.O3_LOW,
@@ -145,12 +140,8 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
 
   // ============================================================================
   // Google Gemini
+  // NOTE: gemini-1.0-pro and gemini-1.5-pro are deprecated - use 2.x+ versions
   // ============================================================================
-  'gemini-1.0-pro': ModelEnum.GEMINI_1_0_PRO,
-  'gemini-1-0-pro': ModelEnum.GEMINI_1_0_PRO,
-  'gemini-1.5-pro': ModelEnum.GEMINI_1_5_PRO,
-  'gemini-1-5-pro': ModelEnum.GEMINI_1_5_PRO,
-  
   'gemini-2.0-flash': ModelEnum.GEMINI_2_0_FLASH,
   'gemini-2-0-flash': ModelEnum.GEMINI_2_0_FLASH,
   
@@ -220,6 +211,8 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'qwen-3-coder-480b': ModelEnum.QWEN_3_CODER_480B_INSTRUCT,
   'qwen-3-coder-480b-fast': ModelEnum.QWEN_3_CODER_480B_INSTRUCT_FAST,
   'qwen-3-coder': ModelEnum.QWEN_3_CODER_480B_INSTRUCT,
+  'qwen-2.5-32b-r1': ModelEnum.QWEN_2_5_32B_INSTRUCT_R1,
+  'qwen-2-5-32b-r1': ModelEnum.QWEN_2_5_32B_INSTRUCT_R1,
 
   // ============================================================================
   // XAI Grok
@@ -237,10 +230,16 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'kimi-k2-thinking': ModelEnum.KIMI_K2_THINKING,
   'glm-4.5': ModelEnum.GLM_4_5,
   'glm-4-5': ModelEnum.GLM_4_5,
+  'glm-4.5-fast': ModelEnum.GLM_4_5_FAST,
+  'glm-4-5-fast': ModelEnum.GLM_4_5_FAST,
   'glm-4.6': ModelEnum.GLM_4_6,
   'glm-4-6': ModelEnum.GLM_4_6,
+  'glm-4.6-fast': ModelEnum.GLM_4_6_FAST,
+  'glm-4-6-fast': ModelEnum.GLM_4_6_FAST,
   'glm-4.7': ModelEnum.GLM_4_7,
   'glm-4-7': ModelEnum.GLM_4_7,
+  'glm-4.7-fast': ModelEnum.GLM_4_7_FAST,
+  'glm-4-7-fast': ModelEnum.GLM_4_7_FAST,
   'minimax-m2': ModelEnum.MINIMAX_M2,
   'minimax-m2.1': ModelEnum.MINIMAX_M2_1,
   'minimax-m2-1': ModelEnum.MINIMAX_M2_1,
@@ -248,6 +247,8 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'swe-1-5': ModelEnum.SWE_1_5,
   'swe-1.5-thinking': ModelEnum.SWE_1_5_THINKING,
   'swe-1-5-thinking': ModelEnum.SWE_1_5_THINKING,
+  'swe-1.5-slow': ModelEnum.SWE_1_5_SLOW,
+  'swe-1-5-slow': ModelEnum.SWE_1_5_SLOW,
 };
 
 /**
@@ -270,7 +271,7 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.CLAUDE_4_1_OPUS_THINKING]: 'claude-4.1-opus-thinking',
   [ModelEnum.CLAUDE_4_5_SONNET]: 'claude-4.5-sonnet',
   [ModelEnum.CLAUDE_4_5_SONNET_THINKING]: 'claude-4.5-sonnet-thinking',
-  [ModelEnum.CLAUDE_4_5_SONNET_1M]: 'claude-4.5-sonnet-1m',
+  // NOTE: CLAUDE_4_5_SONNET_1M not available via API
   [ModelEnum.CLAUDE_4_5_OPUS]: 'claude-4.5-opus',
   [ModelEnum.CLAUDE_4_5_OPUS_THINKING]: 'claude-4.5-opus-thinking',
   [ModelEnum.CLAUDE_CODE]: 'claude-code',
@@ -280,7 +281,7 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.GPT_4_1106_PREVIEW]: 'gpt-4-turbo',
   [ModelEnum.GPT_4O_2024_08_06]: 'gpt-4o',
   [ModelEnum.GPT_4O_MINI_2024_07_18]: 'gpt-4o-mini',
-  [ModelEnum.GPT_4_5]: 'gpt-4.5',
+  // NOTE: GPT_4_5 not available via API
   [ModelEnum.GPT_4_1_2025_04_14]: 'gpt-4.1',
   [ModelEnum.GPT_4_1_MINI_2025_04_14]: 'gpt-4.1-mini',
   [ModelEnum.GPT_4_1_NANO_2025_04_14]: 'gpt-4.1-nano',
@@ -298,10 +299,7 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.GPT_5_2_XHIGH]: 'gpt-5.2-xhigh',
   [ModelEnum.GPT_5_2_MEDIUM_PRIORITY]: 'gpt-5.2-priority',
   
-  // O-Series
-  [ModelEnum.O1]: 'o1',
-  [ModelEnum.O1_MINI]: 'o1-mini',
-  [ModelEnum.O1_PREVIEW]: 'o1-preview',
+  // O-Series (o1 series deprecated - use o3/o4)
   [ModelEnum.O3]: 'o3',
   [ModelEnum.O3_MINI]: 'o3-mini',
   [ModelEnum.O3_LOW]: 'o3-low',
@@ -313,9 +311,7 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.O4_MINI_LOW]: 'o4-mini-low',
   [ModelEnum.O4_MINI_HIGH]: 'o4-mini-high',
   
-  // Gemini
-  [ModelEnum.GEMINI_1_0_PRO]: 'gemini-1.0-pro',
-  [ModelEnum.GEMINI_1_5_PRO]: 'gemini-1.5-pro',
+  // Gemini (1.x series deprecated - use 2.x+)
   [ModelEnum.GEMINI_2_0_FLASH]: 'gemini-2.0-flash',
   [ModelEnum.GEMINI_2_5_PRO]: 'gemini-2.5-pro',
   [ModelEnum.GEMINI_2_5_FLASH]: 'gemini-2.5-flash',
@@ -345,6 +341,7 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.QWEN_2_5_7B_INSTRUCT]: 'qwen-2.5-7b',
   [ModelEnum.QWEN_2_5_32B_INSTRUCT]: 'qwen-2.5-32b',
   [ModelEnum.QWEN_2_5_72B_INSTRUCT]: 'qwen-2.5-72b',
+  [ModelEnum.QWEN_2_5_32B_INSTRUCT_R1]: 'qwen-2.5-32b-r1',
   [ModelEnum.QWEN_3_235B_INSTRUCT]: 'qwen-3-235b',
   [ModelEnum.QWEN_3_CODER_480B_INSTRUCT]: 'qwen-3-coder-480b',
   [ModelEnum.QWEN_3_CODER_480B_INSTRUCT_FAST]: 'qwen-3-coder-480b-fast',
@@ -360,12 +357,16 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.KIMI_K2]: 'kimi-k2',
   [ModelEnum.KIMI_K2_THINKING]: 'kimi-k2-thinking',
   [ModelEnum.GLM_4_5]: 'glm-4.5',
+  [ModelEnum.GLM_4_5_FAST]: 'glm-4.5-fast',
   [ModelEnum.GLM_4_6]: 'glm-4.6',
+  [ModelEnum.GLM_4_6_FAST]: 'glm-4.6-fast',
   [ModelEnum.GLM_4_7]: 'glm-4.7',
+  [ModelEnum.GLM_4_7_FAST]: 'glm-4.7-fast',
   [ModelEnum.MINIMAX_M2]: 'minimax-m2',
   [ModelEnum.MINIMAX_M2_1]: 'minimax-m2.1',
   [ModelEnum.SWE_1_5]: 'swe-1.5',
   [ModelEnum.SWE_1_5_THINKING]: 'swe-1.5-thinking',
+  [ModelEnum.SWE_1_5_SLOW]: 'swe-1.5-slow',
 };
 
 // ============================================================================

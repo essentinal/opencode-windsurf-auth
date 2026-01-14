@@ -145,6 +145,7 @@ export const ModelEnum = {
   QWEN_2_5_7B_INSTRUCT: 178,
   QWEN_2_5_32B_INSTRUCT: 179,
   QWEN_2_5_72B_INSTRUCT: 180,
+  QWEN_2_5_32B_INSTRUCT_R1: 224,
   QWEN_3_235B_INSTRUCT: 324,
   QWEN_3_CODER_480B_INSTRUCT: 325,
   QWEN_3_CODER_480B_INSTRUCT_FAST: 327,
@@ -164,12 +165,17 @@ export const ModelEnum = {
   KIMI_K2: 323,
   KIMI_K2_THINKING: 394,
   GLM_4_5: 342,
+  GLM_4_5_FAST: 352,
   GLM_4_6: 356,
+  GLM_4_6_FAST: 357,
   GLM_4_7: 417,
+  GLM_4_7_FAST: 418,
   MINIMAX_M2: 368,
   MINIMAX_M2_1: 419,
   SWE_1_5: 359,
   SWE_1_5_THINKING: 369,
+  SWE_1_5_SLOW: 377,
+  CLAUDE_4_5_SONNET_THINKING_1M: 371,
 } as const;
 
 export type ModelEnumValue = (typeof ModelEnum)[keyof typeof ModelEnum];
