@@ -29,7 +29,7 @@ bun add opencode-windsurf-codeium@beta
 
 ## OpenCode Configuration
 
-Add the following to your OpenCode config (typically `~/.config/opencode/config.json`). The plugin starts a local proxy server on port 42100 (falls back to a random free port and updates `chat.params` automatically):
+Add the following to your OpenCode config (typically `~/.config/opencode/config.json`). The plugin starts a local proxy server on port 42100 (falls back to a random free port and updates `chat.params` automatically). The full model list with variants is in `opencode_config_example.json`; thinking vs non-thinking are separate models, while variants are only for performance tiers (low/high/xhigh/etc.).
 
 ```json
 {
@@ -42,26 +42,19 @@ Add the following to your OpenCode config (typically `~/.config/opencode/config.
         "baseURL": "http://127.0.0.1:42100/v1"
       },
       "models": {
-        "claude-4.5-opus": {
-          "name": "Claude 4.5 Opus (Windsurf)",
-          "limit": { "context": 200000, "output": 8192 }
+        "claude-4.5-opus": { "name": "Claude 4.5 Opus (Windsurf)", "limit": { "context": 200000, "output": 8192 } },
+        "gpt-5.2": {
+          "name": "GPT 5.2 (Windsurf)",
+          "limit": { "context": 200000, "output": 8192 },
+          "variants": { "low": {}, "medium": {}, "high": {}, "xhigh": {}, "priority": {}, "low-priority": {}, "high-priority": {}, "xhigh-priority": {} }
         },
-        "gpt-5.2-xhigh": {
-          "name": "GPT 5.2 XHigh (Windsurf)",
-          "limit": { "context": 128000, "output": 16384 }
+        "gemini-3.0-pro": {
+          "name": "Gemini 3.0 Pro (Windsurf)",
+          "limit": { "context": 200000, "output": 8192 },
+          "variants": { "minimal": {}, "low": {}, "medium": {}, "high": {} }
         },
-        "gemini-3.0-pro-high": {
-          "name": "Gemini 3.0 Pro High (Windsurf)",
-          "limit": { "context": 200000, "output": 8192 }
-        },
-        "deepseek-r1": {
-          "name": "DeepSeek R1 (Windsurf)",
-          "limit": { "context": 64000, "output": 8192 }
-        },
-        "swe-1.5": {
-          "name": "SWE 1.5 (Windsurf)",
-          "limit": { "context": 128000, "output": 32000 }
-        }
+        "deepseek-r1": { "name": "DeepSeek R1 (Windsurf)", "limit": { "context": 64000, "output": 8192 } },
+        "swe-1.5": { "name": "SWE 1.5 (Windsurf)", "limit": { "context": 128000, "output": 32000 } }
       }
     }
   }
@@ -104,11 +97,11 @@ src/
 
 **Claude**: `claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`, `claude-3.5-sonnet`, `claude-3.5-haiku`, `claude-3.7-sonnet`, `claude-3.7-sonnet-thinking`, `claude-4-opus`, `claude-4-opus-thinking`, `claude-4-sonnet`, `claude-4-sonnet-thinking`, `claude-4.1-opus`, `claude-4.1-opus-thinking`, `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking`, `claude-4.5-opus`, `claude-4.5-opus-thinking`, `claude-code`.
 
-**OpenAI GPT**: `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-nano`, `gpt-5-low`, `gpt-5-high`, `gpt-5-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.2-low`, `gpt-5.2`, `gpt-5.2-high`, `gpt-5.2-xhigh`, `gpt-5.2-priority` (plus the low/high/xhigh priority variants).
+**OpenAI GPT**: `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-nano`, `gpt-5-codex`, `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.2` (variants low/medium/high/xhigh + priority tiers). Non-thinking vs thinking are separate model IDs, not variants.
 
 **OpenAI O-series**: `o3`, `o3-mini`, `o3-low`, `o3-high`, `o3-pro`, `o3-pro-low`, `o3-pro-high`, `o4-mini`, `o4-mini-low`, `o4-mini-high`.
 
-**Gemini**: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`, `gemini-3.0-pro`, `gemini-3.0-pro-low`, `gemini-3.0-pro-high`, `gemini-3.0-flash`, `gemini-3.0-flash-high`.
+**Gemini**: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`, `gemini-3.0-pro` (variants: `minimal`, `low`, `medium`, `high`), `gemini-3.0-flash` (variants: `minimal`, `low`, `medium`, `high`). Thinking versions of Gemini 2.5 are separate models.
 
 **DeepSeek**: `deepseek-v3`, `deepseek-v3-2`, `deepseek-r1`, `deepseek-r1-fast`, `deepseek-r1-slow`.
 
@@ -120,7 +113,7 @@ src/
 
 **Specialty & Proprietary**: `mistral-7b`, `kimi-k2`, `kimi-k2-thinking`, `glm-4.5`, `glm-4.5-fast`, `glm-4.6`, `glm-4.6-fast`, `glm-4.7`, `glm-4.7-fast`, `minimax-m2`, `minimax-m2.1`, `swe-1.5`, `swe-1.5-thinking`, `swe-1.5-slow`.
 
-Aliases (e.g., `gpt-5.2-low-priority`) are also accepted.
+Aliases (e.g., `gpt-5.2-low-priority`) are also accepted. Variants live under `provider.windsurf.models[model].variants`; thinking/non-thinking are distinct models.
 
 ## Development
 
