@@ -750,7 +750,7 @@ async function ensureWindsurfProxyServer(): Promise<string> {
         port,
         fetch: handler,
         // Keep connections alive longer to allow slow/long chat streams
-        idleTimeout: 300, // seconds
+        idleTimeout: 100, // seconds
       });
     };
 
