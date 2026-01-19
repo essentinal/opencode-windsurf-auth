@@ -6,7 +6,7 @@
  * 
  * @example
  * ```typescript
- * import { WindsurfPlugin } from 'opencode-windsurf-codeium';
+ * import { WindsurfPlugin } from 'opencode-windsurf-auth';
  * 
  * // Use in OpenCode configuration
  * export default {

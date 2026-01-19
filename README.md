@@ -1,4 +1,4 @@
-# opencode-windsurf-codeium
+# opencode-windsurf-auth
 
 OpenCode plugin for Windsurf/Codeium authentication - use Windsurf models in OpenCode.
 
@@ -24,7 +24,7 @@ This plugin enables OpenCode users to access Windsurf/Codeium models by leveragi
 ## Installation
 
 ```bash
-bun add opencode-windsurf-codeium@beta
+bun add opencode-windsurf-auth@beta
 ```
 
 ## OpenCode Configuration
@@ -34,7 +34,7 @@ Add the following to your OpenCode config (typically `~/.config/opencode/config.
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-windsurf-codeium@beta"],
+  "plugin": ["opencode-windsurf-auth@beta"],
   "provider": {
     "windsurf": {
       "npm": "@ai-sdk/openai-compatible",
@@ -104,7 +104,6 @@ Add the following to your OpenCode config (typically `~/.config/opencode/config.
 After saving the config:
 
 ```bash
-bun run build && bun add -g opencode-windsurf-codeium@beta  # local install during development
 opencode models list                                            # confirm models appear under windsurf/
 opencode chat --model=windsurf/claude-4.5-opus "Hello"          # quick smoke test
 ```
@@ -175,12 +174,11 @@ bun test
 
 - **Windsurf must be running** - The plugin communicates with the local language server
 - **macOS focus** - Linux/Windows paths need verification
-- **Tool execution** - OpenCode executes tools; plugin only plans tool_calls via Windsurf inference
 
 ## Further Reading
 
-- `docs/WINDSURF_API_SPEC.md` – gRPC endpoints & protobuf notes
-- `docs/REVERSE_ENGINEERING.md` – credential discovery + tooling
+- [docs/WINDSURF_API_SPEC.md](https://github.com/rsvedant/opencode-windsurf-auth/blob/master/docs/WINDSURF_API_SPEC.md) – gRPC endpoints & protobuf notes
+- [docs/REVERSE_ENGINEERING.md](https://github.com/rsvedant/opencode-windsurf-auth/blob/master/docs/REVERSE_ENGINEERING.md) – credential discovery + tooling
 - [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) – related project
 
 ## License
