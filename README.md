@@ -5,7 +5,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/opencode-windsurf-codeium.svg)](https://www.npmjs.com/package/opencode-windsurf-auth)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-OpenCode plugin for Windsurf/Codeium authentication - use Windsurf models in OpenCode.
+Opencode plugin for Windsurf/Codeium authentication - use Windsurf models in Opencode.
 
 ## Features
 
