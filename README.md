@@ -13,11 +13,11 @@ Opencode plugin for Windsurf/Codeium authentication - use Windsurf models in Ope
 - Automatic credential discovery (CSRF token, port, API key)
 - Transparent REST↔gRPC translation over HTTP/2
 - Zero extra auth prompts when Windsurf is running
-- OpenCode tool-calling compatible: tools are planned via Windsurf inference but executed by OpenCode (MCP/tool registry remains authoritative)
+- Opencode tool-calling compatible: tools are planned via Windsurf inference but executed by Opencode (MCP/tool registry remains authoritative)
 
 ## Overview
 
-This plugin enables OpenCode users to access Windsurf/Codeium models by leveraging their existing Windsurf installation. It communicates directly with the **local Windsurf language server** via gRPC—no network traffic capture or OAuth flows required.
+This plugin enables Opencode users to access Windsurf/Codeium models by leveraging their existing Windsurf installation. It communicates directly with the **local Windsurf language server** via gRPC—no network traffic capture or OAuth flows required.
 
 ## Prerequisites
 
@@ -32,9 +32,9 @@ This plugin enables OpenCode users to access Windsurf/Codeium models by leveragi
 bun add opencode-windsurf-auth@beta
 ```
 
-## OpenCode Configuration
+## Opencode Configuration
 
-Add the following to your OpenCode config (typically `~/.config/opencode/config.json`). The plugin starts a local proxy server on port 42100 (falls back to a random free port and updates `chat.params` automatically). The full model list with variants is in `opencode_config_example.json`; thinking vs non-thinking are separate models, while variants are only for performance tiers (low/high/xhigh/etc.).
+Add the following to your Opencode config (typically `~/.config/opencode/config.json`). The plugin starts a local proxy server on port 42100 (falls back to a random free port and updates `chat.params` automatically). The full model list with variants is in `opencode_config_example.json`; thinking vs non-thinking are separate models, while variants are only for performance tiers (low/high/xhigh/etc.).
 
 ```json
 {
