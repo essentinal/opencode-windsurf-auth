@@ -176,6 +176,31 @@ export const ModelEnum = {
   SWE_1_5_THINKING: 369,
   SWE_1_5_SLOW: 377,
   CLAUDE_4_5_SONNET_THINKING_1M: 371,
+
+  // ============================================================================
+  // GPT 5.2 Codex
+  // ============================================================================
+  GPT_5_2_CODEX_LOW: 422,
+  GPT_5_2_CODEX_MEDIUM: 423,
+  GPT_5_2_CODEX_HIGH: 424,
+  GPT_5_2_CODEX_XHIGH: 425,
+  GPT_5_2_CODEX_LOW_PRIORITY: 426,
+  GPT_5_2_CODEX_MEDIUM_PRIORITY: 427,
+  GPT_5_2_CODEX_HIGH_PRIORITY: 428,
+  GPT_5_2_CODEX_XHIGH_PRIORITY: 429,
+
+  // ============================================================================
+  // Codex Mini (OpenAI)
+  // ============================================================================
+  CODEX_MINI_LATEST: 287,
+  CODEX_MINI_LATEST_LOW: 288,
+  CODEX_MINI_LATEST_HIGH: 289,
+
+  // ============================================================================
+  // SWE 1.6
+  // ============================================================================
+  SWE_1_6: 420,
+  SWE_1_6_FAST: 421,
 } as const;
 
 export type ModelEnumValue = (typeof ModelEnum)[keyof typeof ModelEnum];

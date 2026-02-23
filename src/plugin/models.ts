@@ -18,20 +18,18 @@ import { ModelEnum, type ModelEnumValue } from './types.js';
 type VariantName = string;
 
 type VariantMeta = {
-  /** Human-oriented hint used in /v1/models variants payload */
   description?: string;
-  /** Maps to Windsurf enum */
-  enumValue: ModelEnumValue;
+  enumValue?: ModelEnumValue;
+  /** String-based model UID for server-side routing (newer models) */
+  modelUid?: string;
 };
 
 type ModelCatalogEntry = {
-  /** Canonical model id exposed to OpenCode */
   id: string;
-  /** Default enum when no variant supplied */
-  defaultEnum: ModelEnumValue;
-  /** Optional variants keyed by variant name (lowercase) */
+  defaultEnum?: ModelEnumValue;
+  /** String-based model UID for server-side routing (newer models) */
+  defaultModelUid?: string;
   variants?: Record<VariantName, VariantMeta>;
-  /** Aliases accepted for backwards compatibility */
   aliases?: string[];
 };
 
@@ -53,6 +51,8 @@ const VARIANT_CATALOG: Record<string, ModelCatalogEntry> = {
     defaultEnum: ModelEnum.CLAUDE_4_5_SONNET,
     variants: {
       thinking: { enumValue: ModelEnum.CLAUDE_4_5_SONNET_THINKING, description: 'Thinking mode' },
+      '1m': { enumValue: ModelEnum.CLAUDE_4_5_SONNET_1M, description: '1M context' },
+      'thinking-1m': { enumValue: ModelEnum.CLAUDE_4_5_SONNET_THINKING_1M, description: 'Thinking + 1M context' },
     },
   },
   'claude-4.5-opus': {
@@ -124,14 +124,16 @@ const VARIANT_CATALOG: Record<string, ModelCatalogEntry> = {
     id: 'gpt-5.2',
     defaultEnum: ModelEnum.GPT_5_2_MEDIUM,
     variants: {
+      none: { enumValue: ModelEnum.GPT_5_2_NONE, description: 'No reasoning' },
       low: { enumValue: ModelEnum.GPT_5_2_LOW, description: 'Lower cost' },
       medium: { enumValue: ModelEnum.GPT_5_2_MEDIUM, description: 'Balanced (default)' },
       high: { enumValue: ModelEnum.GPT_5_2_HIGH, description: 'Higher capability' },
       xhigh: { enumValue: ModelEnum.GPT_5_2_XHIGH, description: 'Maximum capability' },
-      priority: { enumValue: ModelEnum.GPT_5_2_MEDIUM_PRIORITY, description: 'Priority routing (medium)' },
-      'low-priority': { enumValue: ModelEnum.GPT_5_2_LOW_PRIORITY, description: 'Priority routing (low)' },
-      'high-priority': { enumValue: ModelEnum.GPT_5_2_HIGH_PRIORITY, description: 'Priority routing (high)' },
-      'xhigh-priority': { enumValue: ModelEnum.GPT_5_2_XHIGH_PRIORITY, description: 'Priority routing (xhigh)' },
+      fast: { enumValue: ModelEnum.GPT_5_2_NONE_PRIORITY, description: 'Fast / priority routing (none)' },
+      'low-fast': { enumValue: ModelEnum.GPT_5_2_LOW_PRIORITY, description: 'Low + priority routing' },
+      'medium-fast': { enumValue: ModelEnum.GPT_5_2_MEDIUM_PRIORITY, description: 'Medium + priority routing' },
+      'high-fast': { enumValue: ModelEnum.GPT_5_2_HIGH_PRIORITY, description: 'High + priority routing' },
+      'xhigh-fast': { enumValue: ModelEnum.GPT_5_2_XHIGH_PRIORITY, description: 'XHigh + priority routing' },
     },
     aliases: ['gpt-5-2'],
   },
@@ -143,6 +145,7 @@ const VARIANT_CATALOG: Record<string, ModelCatalogEntry> = {
       low: { enumValue: ModelEnum.GPT_5_LOW, description: 'Lower cost' },
       high: { enumValue: ModelEnum.GPT_5_HIGH, description: 'Higher capability' },
       nano: { enumValue: ModelEnum.GPT_5_NANO, description: 'Small footprint' },
+      codex: { enumValue: ModelEnum.GPT_5_CODEX, description: 'Codex variant' },
     },
   },
   // GPT 5.1 Codex families
@@ -200,6 +203,130 @@ const VARIANT_CATALOG: Record<string, ModelCatalogEntry> = {
       low: { enumValue: ModelEnum.O4_MINI_LOW },
       high: { enumValue: ModelEnum.O4_MINI_HIGH },
     },
+  },
+
+  // GPT 5.2 Codex
+  'gpt-5.2-codex': {
+    id: 'gpt-5.2-codex',
+    defaultEnum: ModelEnum.GPT_5_2_CODEX_MEDIUM,
+    variants: {
+      low: { enumValue: ModelEnum.GPT_5_2_CODEX_LOW },
+      medium: { enumValue: ModelEnum.GPT_5_2_CODEX_MEDIUM },
+      high: { enumValue: ModelEnum.GPT_5_2_CODEX_HIGH },
+      xhigh: { enumValue: ModelEnum.GPT_5_2_CODEX_XHIGH },
+      'low-fast': { enumValue: ModelEnum.GPT_5_2_CODEX_LOW_PRIORITY },
+      'medium-fast': { enumValue: ModelEnum.GPT_5_2_CODEX_MEDIUM_PRIORITY },
+      'high-fast': { enumValue: ModelEnum.GPT_5_2_CODEX_HIGH_PRIORITY },
+      'xhigh-fast': { enumValue: ModelEnum.GPT_5_2_CODEX_XHIGH_PRIORITY },
+    },
+    aliases: ['gpt-5-2-codex'],
+  },
+
+  // Codex Mini (OpenAI)
+  'codex-mini': {
+    id: 'codex-mini',
+    defaultEnum: ModelEnum.CODEX_MINI_LATEST,
+    variants: {
+      low: { enumValue: ModelEnum.CODEX_MINI_LATEST_LOW },
+      high: { enumValue: ModelEnum.CODEX_MINI_LATEST_HIGH },
+    },
+    aliases: ['codex-mini-latest'],
+  },
+
+  // SWE 1.5
+  'swe-1.5': {
+    id: 'swe-1.5',
+    defaultEnum: ModelEnum.SWE_1_5,
+    variants: {
+      thinking: { enumValue: ModelEnum.SWE_1_5_THINKING },
+      slow: { enumValue: ModelEnum.SWE_1_5_SLOW, description: 'Full intelligence, lower throughput' },
+      fast: { enumValue: ModelEnum.SWE_1_5, description: 'Regular throughput (default)' },
+    },
+    aliases: ['swe-1-5'],
+  },
+
+  // SWE 1.6
+  'swe-1.6': {
+    id: 'swe-1.6',
+    defaultEnum: ModelEnum.SWE_1_6,
+    variants: {
+      fast: { enumValue: ModelEnum.SWE_1_6_FAST, description: 'Faster / lower latency' },
+    },
+    aliases: ['swe-1-6'],
+  },
+
+  // Claude 4.6 Opus (string-UID routed)
+  'claude-4.6-opus': {
+    id: 'claude-4.6-opus',
+    defaultModelUid: 'claude-opus-4-6',
+    variants: {
+      thinking: { modelUid: 'claude-opus-4-6-thinking', description: 'Thinking mode' },
+      '1m': { modelUid: 'claude-opus-4-6-1m', description: '1M context' },
+      'thinking-1m': { modelUid: 'claude-opus-4-6-thinking-1m', description: 'Thinking + 1M context' },
+      fast: { modelUid: 'claude-opus-4-6-fast', description: 'Fast / priority routing' },
+      'thinking-fast': { modelUid: 'claude-opus-4-6-thinking-fast', description: 'Thinking + fast' },
+    },
+    aliases: ['claude-4-6-opus'],
+  },
+
+  // Claude 4.6 Sonnet (string-UID routed)
+  'claude-4.6-sonnet': {
+    id: 'claude-4.6-sonnet',
+    defaultModelUid: 'claude-sonnet-4-6',
+    variants: {
+      thinking: { modelUid: 'claude-sonnet-4-6-thinking', description: 'Thinking mode' },
+      '1m': { modelUid: 'claude-sonnet-4-6-1m', description: '1M context' },
+      'thinking-1m': { modelUid: 'claude-sonnet-4-6-thinking-1m', description: 'Thinking + 1M context' },
+    },
+    aliases: ['claude-4-6-sonnet'],
+  },
+
+  // GPT-5.3 Codex (string-UID routed)
+  'gpt-5.3-codex': {
+    id: 'gpt-5.3-codex',
+    defaultModelUid: 'gpt-5-3-codex-medium',
+    variants: {
+      low: { modelUid: 'gpt-5-3-codex-low', description: 'Low reasoning' },
+      medium: { modelUid: 'gpt-5-3-codex-medium', description: 'Medium reasoning (default)' },
+      high: { modelUid: 'gpt-5-3-codex-high', description: 'High reasoning' },
+      xhigh: { modelUid: 'gpt-5-3-codex-xhigh', description: 'Max reasoning' },
+      'low-fast': { modelUid: 'gpt-5-3-codex-low-priority', description: 'Low + priority routing' },
+      'medium-fast': { modelUid: 'gpt-5-3-codex-medium-priority', description: 'Medium + priority routing' },
+      'high-fast': { modelUid: 'gpt-5-3-codex-high-priority', description: 'High + priority routing' },
+      'xhigh-fast': { modelUid: 'gpt-5-3-codex-xhigh-priority', description: 'XHigh + priority routing' },
+    },
+    aliases: ['gpt-5-3-codex'],
+  },
+
+  // Gemini 3.1 Pro (string-UID routed)
+  'gemini-3.1-pro': {
+    id: 'gemini-3.1-pro',
+    defaultModelUid: 'gemini-3-1-pro-low',
+    variants: {
+      low: { modelUid: 'gemini-3-1-pro-low', description: 'Low reasoning' },
+      high: { modelUid: 'gemini-3-1-pro-high', description: 'High reasoning' },
+    },
+    aliases: ['gemini-3-1-pro'],
+  },
+
+  // Kimi K2.5 (string-UID routed)
+  'kimi-k2.5': {
+    id: 'kimi-k2.5',
+    defaultModelUid: 'kimi-k2-5',
+    aliases: ['kimi-k2-5'],
+  },
+
+  // GLM-5 (string-UID routed)
+  'glm-5': {
+    id: 'glm-5',
+    defaultModelUid: 'glm-5',
+  },
+
+  // Minimax M2.5 (string-UID routed)
+  'minimax-m2.5': {
+    id: 'minimax-m2.5',
+    defaultModelUid: 'minimax-m2-5',
+    aliases: ['minimax-m2-5'],
   },
 };
 
@@ -354,16 +481,23 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   // GPT 5.2 variants
   'gpt-5.2': ModelEnum.GPT_5_2_MEDIUM,
   'gpt-5-2': ModelEnum.GPT_5_2_MEDIUM,
+  'gpt-5.2-none': ModelEnum.GPT_5_2_NONE,
   'gpt-5.2-low': ModelEnum.GPT_5_2_LOW,
   'gpt-5-2-low': ModelEnum.GPT_5_2_LOW,
+  'gpt-5.2-medium': ModelEnum.GPT_5_2_MEDIUM,
   'gpt-5.2-high': ModelEnum.GPT_5_2_HIGH,
   'gpt-5-2-high': ModelEnum.GPT_5_2_HIGH,
   'gpt-5.2-xhigh': ModelEnum.GPT_5_2_XHIGH,
   'gpt-5-2-xhigh': ModelEnum.GPT_5_2_XHIGH,
+  'gpt-5.2-fast': ModelEnum.GPT_5_2_NONE_PRIORITY,
   'gpt-5.2-priority': ModelEnum.GPT_5_2_MEDIUM_PRIORITY,
   'gpt-5.2-low-priority': ModelEnum.GPT_5_2_LOW_PRIORITY,
+  'gpt-5.2-low-fast': ModelEnum.GPT_5_2_LOW_PRIORITY,
+  'gpt-5.2-medium-fast': ModelEnum.GPT_5_2_MEDIUM_PRIORITY,
   'gpt-5.2-high-priority': ModelEnum.GPT_5_2_HIGH_PRIORITY,
+  'gpt-5.2-high-fast': ModelEnum.GPT_5_2_HIGH_PRIORITY,
   'gpt-5.2-xhigh-priority': ModelEnum.GPT_5_2_XHIGH_PRIORITY,
+  'gpt-5.2-xhigh-fast': ModelEnum.GPT_5_2_XHIGH_PRIORITY,
 
   // ============================================================================
   // O-Series (OpenAI Reasoning)
@@ -493,6 +627,44 @@ const MODEL_NAME_TO_ENUM: Record<string, ModelEnumValue> = {
   'swe-1-5-thinking': ModelEnum.SWE_1_5_THINKING,
   'swe-1.5-slow': ModelEnum.SWE_1_5_SLOW,
   'swe-1-5-slow': ModelEnum.SWE_1_5_SLOW,
+  'swe-1.6': ModelEnum.SWE_1_6,
+  'swe-1-6': ModelEnum.SWE_1_6,
+  'swe-1.6-fast': ModelEnum.SWE_1_6_FAST,
+  'swe-1-6-fast': ModelEnum.SWE_1_6_FAST,
+
+  // ============================================================================
+  // GPT 5.2 Codex
+  // ============================================================================
+  'gpt-5.2-codex': ModelEnum.GPT_5_2_CODEX_MEDIUM,
+  'gpt-5-2-codex': ModelEnum.GPT_5_2_CODEX_MEDIUM,
+  'gpt-5.2-codex-low': ModelEnum.GPT_5_2_CODEX_LOW,
+  'gpt-5.2-codex-medium': ModelEnum.GPT_5_2_CODEX_MEDIUM,
+  'gpt-5.2-codex-high': ModelEnum.GPT_5_2_CODEX_HIGH,
+  'gpt-5.2-codex-xhigh': ModelEnum.GPT_5_2_CODEX_XHIGH,
+  'gpt-5.2-codex-low-priority': ModelEnum.GPT_5_2_CODEX_LOW_PRIORITY,
+  'gpt-5.2-codex-low-fast': ModelEnum.GPT_5_2_CODEX_LOW_PRIORITY,
+  'gpt-5.2-codex-medium-priority': ModelEnum.GPT_5_2_CODEX_MEDIUM_PRIORITY,
+  'gpt-5.2-codex-medium-fast': ModelEnum.GPT_5_2_CODEX_MEDIUM_PRIORITY,
+  'gpt-5.2-codex-high-priority': ModelEnum.GPT_5_2_CODEX_HIGH_PRIORITY,
+  'gpt-5.2-codex-high-fast': ModelEnum.GPT_5_2_CODEX_HIGH_PRIORITY,
+  'gpt-5.2-codex-xhigh-priority': ModelEnum.GPT_5_2_CODEX_XHIGH_PRIORITY,
+  'gpt-5.2-codex-xhigh-fast': ModelEnum.GPT_5_2_CODEX_XHIGH_PRIORITY,
+
+  // ============================================================================
+  // Codex Mini (OpenAI)
+  // ============================================================================
+  'codex-mini': ModelEnum.CODEX_MINI_LATEST,
+  'codex-mini-latest': ModelEnum.CODEX_MINI_LATEST,
+  'codex-mini-low': ModelEnum.CODEX_MINI_LATEST_LOW,
+  'codex-mini-high': ModelEnum.CODEX_MINI_LATEST_HIGH,
+
+  // ============================================================================
+  // Claude 4.5 Sonnet 1M (enum-based, was missing)
+  // ============================================================================
+  'claude-4.5-sonnet-1m': ModelEnum.CLAUDE_4_5_SONNET_1M,
+  'claude-4-5-sonnet-1m': ModelEnum.CLAUDE_4_5_SONNET_1M,
+  'claude-4.5-sonnet-thinking-1m': ModelEnum.CLAUDE_4_5_SONNET_THINKING_1M,
+  'claude-4-5-sonnet-thinking-1m': ModelEnum.CLAUDE_4_5_SONNET_THINKING_1M,
 };
 
 /**
@@ -515,7 +687,8 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.CLAUDE_4_1_OPUS_THINKING]: 'claude-4.1-opus-thinking',
   [ModelEnum.CLAUDE_4_5_SONNET]: 'claude-4.5-sonnet',
   [ModelEnum.CLAUDE_4_5_SONNET_THINKING]: 'claude-4.5-sonnet-thinking',
-  // NOTE: CLAUDE_4_5_SONNET_1M not available via API
+  [ModelEnum.CLAUDE_4_5_SONNET_1M]: 'claude-4.5-sonnet-1m',
+  [ModelEnum.CLAUDE_4_5_SONNET_THINKING_1M]: 'claude-4.5-sonnet-thinking-1m',
   [ModelEnum.CLAUDE_4_5_OPUS]: 'claude-4.5-opus',
   [ModelEnum.CLAUDE_4_5_OPUS_THINKING]: 'claude-4.5-opus-thinking',
   [ModelEnum.CLAUDE_CODE]: 'claude-code',
@@ -537,11 +710,16 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.GPT_5_1_CODEX_MINI_MEDIUM]: 'gpt-5.1-codex-mini',
   [ModelEnum.GPT_5_1_CODEX_MEDIUM]: 'gpt-5.1-codex',
   [ModelEnum.GPT_5_1_CODEX_MAX_MEDIUM]: 'gpt-5.1-codex-max',
+  [ModelEnum.GPT_5_2_NONE]: 'gpt-5.2-none',
   [ModelEnum.GPT_5_2_LOW]: 'gpt-5.2-low',
   [ModelEnum.GPT_5_2_MEDIUM]: 'gpt-5.2',
   [ModelEnum.GPT_5_2_HIGH]: 'gpt-5.2-high',
   [ModelEnum.GPT_5_2_XHIGH]: 'gpt-5.2-xhigh',
-  [ModelEnum.GPT_5_2_MEDIUM_PRIORITY]: 'gpt-5.2-priority',
+  [ModelEnum.GPT_5_2_NONE_PRIORITY]: 'gpt-5.2-fast',
+  [ModelEnum.GPT_5_2_LOW_PRIORITY]: 'gpt-5.2-low-fast',
+  [ModelEnum.GPT_5_2_MEDIUM_PRIORITY]: 'gpt-5.2-medium-fast',
+  [ModelEnum.GPT_5_2_HIGH_PRIORITY]: 'gpt-5.2-high-fast',
+  [ModelEnum.GPT_5_2_XHIGH_PRIORITY]: 'gpt-5.2-xhigh-fast',
   
   // O-Series (o1 series deprecated - use o3/o4)
   [ModelEnum.O3]: 'o3',
@@ -611,6 +789,23 @@ const ENUM_TO_MODEL_NAME: Partial<Record<ModelEnumValue, string>> = {
   [ModelEnum.SWE_1_5]: 'swe-1.5',
   [ModelEnum.SWE_1_5_THINKING]: 'swe-1.5-thinking',
   [ModelEnum.SWE_1_5_SLOW]: 'swe-1.5-slow',
+  [ModelEnum.SWE_1_6]: 'swe-1.6',
+  [ModelEnum.SWE_1_6_FAST]: 'swe-1.6-fast',
+
+  // GPT 5.2 Codex
+  [ModelEnum.GPT_5_2_CODEX_LOW]: 'gpt-5.2-codex-low',
+  [ModelEnum.GPT_5_2_CODEX_MEDIUM]: 'gpt-5.2-codex',
+  [ModelEnum.GPT_5_2_CODEX_HIGH]: 'gpt-5.2-codex-high',
+  [ModelEnum.GPT_5_2_CODEX_XHIGH]: 'gpt-5.2-codex-xhigh',
+  [ModelEnum.GPT_5_2_CODEX_LOW_PRIORITY]: 'gpt-5.2-codex-low-fast',
+  [ModelEnum.GPT_5_2_CODEX_MEDIUM_PRIORITY]: 'gpt-5.2-codex-medium-fast',
+  [ModelEnum.GPT_5_2_CODEX_HIGH_PRIORITY]: 'gpt-5.2-codex-high-fast',
+  [ModelEnum.GPT_5_2_CODEX_XHIGH_PRIORITY]: 'gpt-5.2-codex-xhigh-fast',
+
+  // Codex Mini
+  [ModelEnum.CODEX_MINI_LATEST]: 'codex-mini',
+  [ModelEnum.CODEX_MINI_LATEST_LOW]: 'codex-mini-low',
+  [ModelEnum.CODEX_MINI_LATEST_HIGH]: 'codex-mini-high',
 };
 
 // ============================================================================
@@ -621,6 +816,8 @@ export function resolveModel(modelName: string, variantOverride?: string): {
   enumValue: ModelEnumValue;
   modelId: string;
   variant?: string;
+  /** String-based model UID for server-side routing (newer models). Takes priority over enumValue. */
+  modelUid?: string;
 } {
   const { base, variant } = splitModelAndVariant(modelName);
   const baseId = ALIAS_TO_ID[base] || base;
@@ -629,13 +826,19 @@ export function resolveModel(modelName: string, variantOverride?: string): {
   if (entry) {
     const effectiveVariant = (variantOverride || variant || '').trim().toLowerCase();
     if (effectiveVariant && entry.variants?.[effectiveVariant]) {
+      const v = entry.variants[effectiveVariant]!;
       return {
-        enumValue: entry.variants[effectiveVariant]!.enumValue,
+        enumValue: v.enumValue ?? ModelEnum.MODEL_UNSPECIFIED,
         modelId: entry.id,
         variant: effectiveVariant,
+        modelUid: v.modelUid,
       };
     }
-    return { enumValue: entry.defaultEnum, modelId: entry.id };
+    return {
+      enumValue: entry.defaultEnum ?? ModelEnum.MODEL_UNSPECIFIED,
+      modelId: entry.id,
+      modelUid: entry.defaultModelUid,
+    };
   }
 
   // Fallback to legacy map
