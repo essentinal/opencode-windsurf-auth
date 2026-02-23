@@ -159,7 +159,7 @@ export function getPort(): number {
   if (process.platform !== 'win32' && pid) {
     try {
       const lsof = execSync(
-        `lsof -p ${pid} -i -P -n 2>/dev/null | grep LISTEN`,
+        `lsof -a -p ${pid} -i -P -n 2>/dev/null | grep LISTEN`,
         { encoding: 'utf8', timeout: 15000 }
       );
       
