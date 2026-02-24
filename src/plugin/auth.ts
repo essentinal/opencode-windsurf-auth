@@ -66,7 +66,7 @@ const LEGACY_CONFIG_PATH = path.join(os.homedir(), '.codeium', 'config.json');
 // Platform-specific process names
 const LANGUAGE_SERVER_PATTERNS = {
   darwin: 'language_server_macos',
-  linux: 'language_server_linux',
+  linux: 'language_server_linux_x64',
   win32: 'language_server_windows',
 } as const;
 
@@ -156,7 +156,7 @@ export function getPort(): number {
   const extPort = portMatch ? parseInt(portMatch[1], 10) : null;
   
   // Use lsof to find actual listening ports for this specific PID
-  if (process.platform !== 'win32' && pid) {
+  if (process.platform === 'darwin' && pid) {
     try {
       const lsof = execSync(
         `lsof -a -p ${pid} -i -P -n 2>/dev/null | grep LISTEN`,
@@ -177,6 +177,24 @@ export function getPort(): number {
           }
         }
         // Otherwise just return the first listening port
+        return ports[0];
+      }
+    } catch {
+      // Fall through to offset-based approach
+    }
+  } else if (process.platform !== 'win32' && pid) {
+    try {
+      const lsof = execSync(
+        `lsof -p ${pid} -i -P -n 2>/dev/null | grep language | grep LISTEN`, 
+        { encoding: 'utf8', timeout: 15000 }
+      );
+      
+      // Extract all listening ports
+      const portMatches = lsof.matchAll(/:(\d+)\s+\(LISTEN\)/g);
+      const ports = Array.from(portMatches).map(m => parseInt(m[1], 10));
+      
+      if (ports.length > 0) {
+        // just return the first listening port
         return ports[0];
       }
     } catch {
