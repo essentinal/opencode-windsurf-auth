@@ -493,7 +493,7 @@ export function streamChat(
   const { csrfToken, port, apiKey, version } = credentials;
   const resolved = resolveModel(options.model);
   const modelEnum = resolved.enumValue;
-  const modelName = resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId;
+  const modelName = resolved.modelUid ?? (resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId);
   const body = buildChatRequest(apiKey, version, modelEnum, options.messages, modelName);
 
   return new Promise((resolve, reject) => {
@@ -586,7 +586,7 @@ export async function* streamChatGenerator(
   const { csrfToken, port, apiKey, version } = credentials;
   const resolved = resolveModel(options.model);
   const modelEnum = resolved.enumValue;
-  const modelName = resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId;
+  const modelName = resolved.modelUid ?? (resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId);
   const body = buildChatRequest(apiKey, version, modelEnum, options.messages, modelName);
 
   const client = http2.connect(`http://localhost:${port}`);

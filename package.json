@@ -22,7 +22,8 @@
     "test:unit": "bun test tests/unit",
     "test:request": "bun run tests/live/request.ts",
     "test:analyze": "bun run tests/live/analyze.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "extract-models": "bun run scripts/extract-models.ts"
   },
   "keywords": [
     "opencode",
