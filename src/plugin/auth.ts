@@ -82,131 +82,192 @@ function getLanguageServerPattern(): string {
   return LANGUAGE_SERVER_PATTERNS[platform] || 'language_server';
 }
 
+interface LanguageServerProcess {
+  pid: string;
+  csrfToken: string;
+  extensionServerPort: number | null;
+  line: string;
+}
+
 /**
- * Get process listing for language server
+ * Parse all language server processes and return them as structured entries.
+ * Each entry contains the PID, CSRF token, and extension_server_port from the same line,
+ * ensuring they always belong to the same process.
  */
-function getLanguageServerProcess(): string | null {
+function getLanguageServerProcesses(): LanguageServerProcess[] {
   const pattern = getLanguageServerPattern();
-  
+
   try {
+    let output: string;
     if (process.platform === 'win32') {
-      // Windows: use WMIC
-      const output = execSync(
-        `wmic process where "name like '%${pattern}%'" get CommandLine /format:list`,
+      output = execSync(
+        `wmic process where "name like '%${pattern}%'" get CommandLine,ProcessId /format:list`,
         { encoding: 'utf8', timeout: 5000 }
       );
-      return output;
     } else {
-      // Unix-like: use ps
-      const output = execSync(
+      output = execSync(
         `ps aux | grep ${pattern}`,
         { encoding: 'utf8', timeout: 5000 }
       );
-      return output;
     }
+
+    const results: LanguageServerProcess[] = [];
+    for (const line of output.split('\n')) {
+      if (!line.includes(pattern) || line.includes('grep')) continue;
+
+      const pidMatch = line.match(/^\s*\S+\s+(\d+)/);
+      const csrfMatch = line.match(/--csrf_token\s+([a-f0-9-]+)/);
+      const portMatch = line.match(/--extension_server_port\s+(\d+)/);
+
+      if (pidMatch && csrfMatch) {
+        results.push({
+          pid: pidMatch[1],
+          csrfToken: csrfMatch[1],
+          extensionServerPort: portMatch ? parseInt(portMatch[1], 10) : null,
+          line,
+        });
+      }
+    }
+
+    return results;
   } catch {
-    return null;
+    return [];
   }
+}
+
+/**
+ * Find the gRPC listening port for a specific PID using /proc (Linux) or lsof (macOS).
+ */
+function getPortForPid(pid: string, extPort: number | null): number | null {
+  if (process.platform === 'linux') {
+    try {
+      // Get all listening ports for this PID via its fd symlinks in /proc
+      const fdDir = `/proc/${pid}/fd`;
+      const socketInodes = new Set<string>();
+      try {
+        const fds = execSync(`ls -la ${fdDir} 2>/dev/null | grep socket`, {
+          encoding: 'utf8', timeout: 5000,
+        });
+        for (const fdLine of fds.split('\n')) {
+          const m = fdLine.match(/socket:\[(\d+)\]/);
+          if (m) socketInodes.add(m[1]);
+        }
+      } catch {
+        // ignore
+      }
+
+      if (socketInodes.size > 0) {
+        // Parse /proc/net/tcp and tcp6 to find ports for these inodes
+        const netFiles = ['/proc/net/tcp', '/proc/net/tcp6'];
+        const listeningPorts: number[] = [];
+        for (const netFile of netFiles) {
+          try {
+            const content = execSync(`cat ${netFile} 2>/dev/null`, { encoding: 'utf8', timeout: 5000 });
+            for (const line of content.split('\n').slice(1)) {
+              const cols = line.trim().split(/\s+/);
+              if (cols[3] === '0A' && socketInodes.has(cols[9])) {
+                const portHex = cols[1].split(':')[1];
+                if (portHex) listeningPorts.push(parseInt(portHex, 16));
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (listeningPorts.length > 0) {
+          if (extPort) {
+            const after = listeningPorts.filter(p => p > extPort).sort((a, b) => a - b);
+            if (after.length > 0) return after[0];
+          }
+          return listeningPorts.sort((a, b) => a - b)[0];
+        }
+      }
+
+      // Fallback: ss or lsof
+      try {
+        const ss = execSync(`ss -tlnp 2>/dev/null | grep pid=${pid}`, { encoding: 'utf8', timeout: 5000 });
+        const ports: number[] = [];
+        for (const line of ss.split('\n')) {
+          if (!line.includes(`pid=${pid}`)) continue;
+          const m = line.match(/:(\d+)\s/);
+          if (m) ports.push(parseInt(m[1], 10));
+        }
+        if (ports.length > 0) {
+          if (extPort) {
+            const after = ports.filter(p => p > extPort).sort((a, b) => a - b);
+            if (after.length > 0) return after[0];
+          }
+          return ports.sort((a, b) => a - b)[0];
+        }
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore
+    }
+  } else if (process.platform === 'darwin') {
+    try {
+      const lsof = execSync(
+        `lsof -a -p ${pid} -i -P -n 2>/dev/null | grep LISTEN`,
+        { encoding: 'utf8', timeout: 15000 }
+      );
+      const ports: number[] = [];
+      for (const m of lsof.matchAll(/:(\d+)\s+\(LISTEN\)/g)) {
+        ports.push(parseInt(m[1], 10));
+      }
+      if (ports.length > 0) {
+        if (extPort) {
+          const after = ports.filter(p => p > extPort).sort((a, b) => a - b);
+          if (after.length > 0) return after[0];
+        }
+        return ports[0];
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Last resort: offset fallback
+  if (extPort) return extPort + 3;
+  return null;
 }
 
 /**
  * Extract CSRF token from running Windsurf language server process
  */
 export function getCSRFToken(): string {
-  const processInfo = getLanguageServerProcess();
-  
-  if (!processInfo) {
+  const processes = getLanguageServerProcesses();
+
+  if (processes.length === 0) {
     throw new WindsurfError(
       'Windsurf language server not found. Is Windsurf running?',
       WindsurfErrorCode.NOT_RUNNING
     );
   }
-  
-  const match = processInfo.match(/--csrf_token\s+([a-f0-9-]+)/);
-  if (match?.[1]) {
-    return match[1];
-  }
-  
-  throw new WindsurfError(
-    'CSRF token not found in Windsurf process. Is Windsurf running?',
-    WindsurfErrorCode.CSRF_MISSING
-  );
+
+  return processes[0].csrfToken;
 }
 
 /**
- * Get the language server gRPC port dynamically using lsof
- * The port offset from extension_server_port varies (--random_port flag), so we use lsof
+ * Get the language server gRPC port dynamically.
+ * Always resolved from the same process as the CSRF token.
  */
 export function getPort(): number {
-  const processInfo = getLanguageServerProcess();
-  
-  if (!processInfo) {
+  const processes = getLanguageServerProcesses();
+
+  if (processes.length === 0) {
     throw new WindsurfError(
       'Windsurf language server not found. Is Windsurf running?',
       WindsurfErrorCode.NOT_RUNNING
     );
   }
-  
-  // Extract PID from ps output (second column)
-  const pidMatch = processInfo.match(/^\s*\S+\s+(\d+)/);
-  const pid = pidMatch ? pidMatch[1] : null;
-  
-  // Get extension_server_port as a reference point
-  const portMatch = processInfo.match(/--extension_server_port\s+(\d+)/);
-  const extPort = portMatch ? parseInt(portMatch[1], 10) : null;
-  
-  // Use lsof to find actual listening ports for this specific PID
-  if (process.platform === 'darwin' && pid) {
-    try {
-      const lsof = execSync(
-        `lsof -a -p ${pid} -i -P -n 2>/dev/null | grep LISTEN`,
-        { encoding: 'utf8', timeout: 15000 }
-      );
-      
-      // Extract all listening ports
-      const portMatches = lsof.matchAll(/:(\d+)\s+\(LISTEN\)/g);
-      const ports = Array.from(portMatches).map(m => parseInt(m[1], 10));
-      
-      if (ports.length > 0) {
-        // If we have extension_server_port, prefer the port closest to it (usually +3)
-        if (extPort) {
-          // Sort by distance from extPort and pick the closest one > extPort
-          const candidatePorts = ports.filter(p => p > extPort).sort((a, b) => a - b);
-          if (candidatePorts.length > 0) {
-            return candidatePorts[0]; // Return the first port after extPort
-          }
-        }
-        // Otherwise just return the first listening port
-        return ports[0];
-      }
-    } catch {
-      // Fall through to offset-based approach
-    }
-  } else if (process.platform !== 'win32' && pid) {
-    try {
-      const lsof = execSync(
-        `lsof -p ${pid} -i -P -n 2>/dev/null | grep language | grep LISTEN`, 
-        { encoding: 'utf8', timeout: 15000 }
-      );
-      
-      // Extract all listening ports
-      const portMatches = lsof.matchAll(/:(\d+)\s+\(LISTEN\)/g);
-      const ports = Array.from(portMatches).map(m => parseInt(m[1], 10));
-      
-      if (ports.length > 0) {
-        // just return the first listening port
-        return ports[0];
-      }
-    } catch {
-      // Fall through to offset-based approach
-    }
-  }
-  
-  // Fallback: try common offsets (+3, +2, +4)
-  if (extPort) {
-    return extPort + 3;
-  }
-  
+
+  const proc = processes[0];
+  const port = getPortForPid(proc.pid, proc.extensionServerPort);
+
+  if (port !== null) return port;
+
   throw new WindsurfError(
     'Windsurf language server port not found. Is Windsurf running?',
     WindsurfErrorCode.NOT_RUNNING
@@ -274,18 +335,15 @@ export function getApiKey(): string {
  * Get Windsurf version from process arguments
  */
 export function getWindsurfVersion(): string {
-  const processInfo = getLanguageServerProcess();
-  
-  if (processInfo) {
-    const match = processInfo.match(/--windsurf_version\s+([^\s]+)/);
+  const processes = getLanguageServerProcesses();
+
+  if (processes.length > 0) {
+    const match = processes[0].line.match(/--windsurf_version\s+([^\s]+)/);
     if (match) {
-      // Extract just the version number (before + if present)
-      const version = match[1].split('+')[0];
-      return version;
+      return match[1].split('+')[0];
     }
   }
-  
-  // Default fallback version
+
   return '1.13.104';
 }
 

@@ -15,13 +15,14 @@
  */
 
 import * as crypto from 'crypto';
+import * as _childProcess from 'child_process';
+import * as _path from 'path';
+import * as _fs from 'fs';
 import type { PluginInput, Hooks } from '@opencode-ai/plugin';
-import { getCredentials, isWindsurfRunning, WindsurfCredentials } from './plugin/auth.js';
+import { WindsurfCredentials } from './plugin/auth.js';
 import { streamChatGenerator, ChatMessage } from './plugin/grpc-client.js';
 import {
   getDefaultModel,
-  getCanonicalModels,
-  getModelVariants,
   resolveModel,
 } from './plugin/models.js';
 import { PLUGIN_ID } from './constants.js';
@@ -120,7 +121,7 @@ function buildToolCallPayload(model: string, toolCalls: Array<{ name: string; ar
   };
 }
 
-async function handleToolPlanning(
+export async function handleToolPlanning(
   credentials: WindsurfCredentials,
   request: ChatCompletionRequest
 ): Promise<Response> {
@@ -155,7 +156,7 @@ async function handleToolPlanning(
   });
 }
 
-function handleToolPlanningStream(
+export function handleToolPlanningStream(
   credentials: WindsurfCredentials,
   request: ChatCompletionRequest
 ): ReadableStream<Uint8Array> {
@@ -468,7 +469,7 @@ function createOpenAICompatibleResponse(
 /**
  * Create a streaming response using the gRPC generator
  */
-function createStreamingResponse(
+export function createStreamingResponse(
   credentials: WindsurfCredentials,
   request: ChatCompletionRequest
 ): ReadableStream<Uint8Array> {
@@ -544,7 +545,7 @@ function createStreamingResponse(
 /**
  * Create a non-streaming response by collecting all chunks
  */
-async function createNonStreamingResponse(
+export async function createNonStreamingResponse(
   credentials: WindsurfCredentials,
   request: ChatCompletionRequest
 ): Promise<ChatCompletionResponse> {
@@ -594,11 +595,7 @@ async function createNonStreamingResponse(
 const WINDSURF_PROXY_HOST = '127.0.0.1';
 const WINDSURF_PROXY_DEFAULT_PORT = 42100;
 
-function getGlobalKey(): string {
-  return '__opencode_windsurf_proxy_server__';
-}
-
-function openAIError(status: number, message: string, details?: string): Response {
+export function openAIError(status: number, message: string, details?: string): Response {
   return new Response(
     JSON.stringify({
       error: {
@@ -612,181 +609,79 @@ function openAIError(status: number, message: string, details?: string): Respons
   );
 }
 
-async function ensureWindsurfProxyServer(): Promise<string> {
-  const key = getGlobalKey();
-  const g = globalThis as any;
+/**
+ * Spawn the proxy as a detached background process so it outlives OpenCode.
+ * Uses the compiled dist/server.js entry point via the bun binary.
+ */
+function spawnProxyDaemon(): void {
+  // Use Node builtins directly via ESM import (pre-imported at module level)
+  const { spawn } = _childProcess;
+  const path = _path;
+  const fs = _fs;
 
-  // Return existing server URL if already started
-  const existingBaseURL = g[key]?.baseURL;
-  if (typeof existingBaseURL === 'string' && existingBaseURL.length > 0) {
-    return existingBaseURL;
+  // Find bun executable
+  let bunBin = 'bun';
+  const bunCandidates = [
+    process.env.HOME ? `${process.env.HOME}/.bun/bin/bun` : null,
+    '/usr/local/bin/bun',
+    '/usr/bin/bun',
+  ].filter(Boolean) as string[];
+  for (const candidate of bunCandidates) {
+    if (fs.existsSync(candidate)) { bunBin = candidate; break; }
   }
 
-  // Mark as starting to avoid duplicate starts
-  g[key] = { baseURL: '' };
+  // Resolve the server entry point relative to this file
+  const serverEntry = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    'server.js'
+  );
 
-  const handler = async (req: Request): Promise<Response> => {
-    try {
-      const url = new URL(req.url);
+  if (!fs.existsSync(serverEntry)) return;
 
-      // Health check endpoint
-      if (url.pathname === '/health') {
-        return new Response(JSON.stringify({ ok: true, windsurf: isWindsurfRunning() }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+  const child = spawn(bunBin, [serverEntry], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+  child.unref();
+}
 
-      // Models endpoint
-      if (url.pathname === '/v1/models' || url.pathname === '/models') {
-        const models = getCanonicalModels();
-        return new Response(
-          JSON.stringify({
-            object: 'list',
-            data: models.map((id) => {
-              const variants = getModelVariants(id);
-              return {
-                id,
-                object: 'model',
-                created: Math.floor(Date.now() / 1000),
-                owned_by: 'windsurf',
-                ...(variants
-                  ? {
-                      variants: Object.entries(variants).map(([name, meta]) => ({
-                        id: name,
-                        description: meta.description,
-                      })),
-                    }
-                  : {}),
-              };
-            }),
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
+export async function ensureWindsurfProxyServer(): Promise<string> {
+  const baseURL = `http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/v1`;
 
-      // Chat completions endpoint
-      if (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions') {
-        if (!isWindsurfRunning()) {
-          return openAIError(503, 'Windsurf is not running. Please launch Windsurf first.');
-        }
+  // If proxy already up, return immediately
+  try {
+    const res = await fetch(`http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/health`).catch(() => null);
+    if (res && res.ok) return baseURL;
+  } catch {
+    // ignore
+  }
 
-        try {
-          const credentials = getCredentials();
-          const body = await req.json().catch(() => ({}));
-          const requestBody = body as ChatCompletionRequest;
-          const isStreaming = requestBody.stream === true;
+  // Spawn persistent proxy daemon and wait for it to come up (up to 5s)
+  spawnProxyDaemon();
 
-          const hasToolsField = Array.isArray(requestBody.tools) && requestBody.tools.length > 0;
-          const hasToolMessages = requestBody.messages?.some(
-            (m) =>
-              m.role === 'tool' ||
-              (m.role === 'assistant' && Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0)
-          );
-
-          // If tools are requested, run local planning loop (non-streaming only).
-          if (hasToolsField || hasToolMessages) {
-            if (isStreaming) {
-              const stream = handleToolPlanningStream(credentials, requestBody);
-              return new Response(stream, {
-                status: 200,
-                headers: {
-                  'Content-Type': 'text/event-stream',
-                  'Cache-Control': 'no-cache',
-                  Connection: 'keep-alive',
-                },
-              });
-            }
-            return await handleToolPlanning(credentials, requestBody);
-          }
-
-          if (isStreaming) {
-            const stream = createStreamingResponse(credentials, requestBody);
-            return new Response(stream, {
-              status: 200,
-              headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive',
-              },
-            });
-          }
-
-          const responseData = await createNonStreamingResponse(credentials, requestBody);
-          return new Response(JSON.stringify(responseData), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        } catch (chatError) {
-          const errMsg = chatError instanceof Error ? chatError.message : String(chatError);
-          return openAIError(500, 'Chat completion failed', errMsg);
-        }
-      }
-
-      return openAIError(404, `Unsupported path: ${url.pathname}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return openAIError(500, 'Proxy error', message);
-    }
-  };
-
-  const bunAny = globalThis as any;
-  if (typeof bunAny.Bun !== 'undefined' && typeof bunAny.Bun.serve === 'function') {
-    // Check if server already running on default port
+  for (let i = 0; i < 25; i++) {
+    await new Promise(r => setTimeout(r, 200));
     try {
       const res = await fetch(`http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/health`).catch(() => null);
-      if (res && res.ok) {
-        const baseURL = `http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/v1`;
-        g[key].baseURL = baseURL;
-        return baseURL;
-      }
+      if (res && res.ok) return baseURL;
     } catch {
-      // ignore
-    }
-
-    const startServer = (port: number) => {
-      return bunAny.Bun.serve({
-        hostname: WINDSURF_PROXY_HOST,
-        port,
-        fetch: handler,
-        // Keep connections alive longer to allow slow/long chat streams
-        idleTimeout: 100, // seconds
-      });
-    };
-
-    try {
-      const server = startServer(WINDSURF_PROXY_DEFAULT_PORT);
-      const baseURL = `http://${WINDSURF_PROXY_HOST}:${server.port}/v1`;
-      g[key].baseURL = baseURL;
-      return baseURL;
-    } catch (error) {
-      const code = (error as any)?.code;
-      if (code !== 'EADDRINUSE') {
-        throw error;
-      }
-
-      // Port in use - check if it's our server
-      try {
-        const res = await fetch(`http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/health`).catch(() => null);
-        if (res && res.ok) {
-          const baseURL = `http://${WINDSURF_PROXY_HOST}:${WINDSURF_PROXY_DEFAULT_PORT}/v1`;
-          g[key].baseURL = baseURL;
-          return baseURL;
-        }
-      } catch {
-        // ignore
-      }
-
-      // Fallback to random port
-      const server = startServer(0);
-      const baseURL = `http://${WINDSURF_PROXY_HOST}:${server.port}/v1`;
-      g[key].baseURL = baseURL;
-      return baseURL;
+      // keep waiting
     }
   }
 
-  throw new Error('Windsurf proxy server requires Bun runtime');
+  // Return the URL anyway — it may still be starting up
+  return baseURL;
 }
+
+// ============================================================================
+// Eager proxy startup — begins at module load time so the server is ready
+// before OpenCode invokes the plugin factory asynchronously.
+// ============================================================================
+
+void ensureWindsurfProxyServer().catch(() => {
+  // Swallow startup errors here; they will surface when the factory awaits
+});
 
 // ============================================================================
 // Plugin Factory
@@ -798,7 +693,7 @@ async function ensureWindsurfProxyServer(): Promise<string> {
 export const createWindsurfPlugin =
   (providerId: string = PLUGIN_ID) =>
   async (_context: PluginInput): Promise<Hooks> => {
-    // Start proxy server on plugin load
+    // Await the eagerly-started proxy (may already be resolved)
     const proxyBaseURL = await ensureWindsurfProxyServer();
 
     return {
@@ -806,21 +701,17 @@ export const createWindsurfPlugin =
         provider: providerId,
 
         async loader(_getAuth: () => Promise<unknown>) {
-          // Return empty - we handle auth via the proxy server
           return {};
         },
 
-        // No auth methods needed - we use Windsurf's existing auth
         methods: [],
       },
 
-      // Dynamic baseURL injection (key pattern from cursor-auth)
       async 'chat.params'(input: any, output: any) {
         if (input.model?.providerID !== providerId) {
           return;
         }
 
-        // Inject the proxy server URL dynamically
         output.options = output.options || {};
         output.options.baseURL = proxyBaseURL;
         output.options.apiKey = output.options.apiKey || 'windsurf-local';

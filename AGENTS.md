@@ -27,17 +27,26 @@ Client (OpenAI-format)
   → POST localhost:42100/v1/chat/completions
   → plugin.ts (Bun HTTP server)
     → auth.ts: discover CSRF, port, API key from running Windsurf
-    → models.ts: resolve model name → protobuf enum value
-    → discovery.ts: parse extension.js for protobuf field numbers
-    → grpc-client.ts: encode protobuf, HTTP/2 POST to localhost:{port}
-      → /exa.language_server_pb.LanguageServerService/RawGetChatMessage
+    → models.ts: resolve model name → enum value + requested_model_uid string
+    → grpc-client.ts: Cascade API flow over HTTP/2 to localhost:{port}
+        1. StartCascade → cascadeId
+        2. SendUserCascadeMessage (with CascadeConfig + model UID)
+        3. Poll GetCascadeTrajectorySteps until planner_response arrives
   → Windsurf language server (local gRPC)
   → Windsurf cloud inference
-  → Streaming protobuf response
-  → grpc-client.ts: decode protobuf, yield text chunks
+  → grpc-client.ts: extract planner_response.response text
   → plugin.ts: wrap as SSE `data: {...}\n\n` chunks
   → Client receives OpenAI-format stream
 ```
+
+**Key gRPC paths**:
+- `StartCascade`: `/exa.language_server_pb.LanguageServerService/StartCascade`
+- `SendUserCascadeMessage`: `/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage`
+- `GetCascadeTrajectorySteps`: `/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps`
+
+**Why not `StreamCascadeReactiveUpdates`?** That stream only delivers frames to the IDE's own
+webview process (which holds persistent subscriptions). External processes always receive zero
+frames. Polling `GetCascadeTrajectorySteps` is the correct approach for external clients.
 
 ## Module Structure
 
@@ -95,32 +104,59 @@ docs/
 
 ## gRPC Protocol
 
-### Endpoint
+### Common Headers
 ```
-POST http://localhost:{port}/exa.language_server_pb.LanguageServerService/RawGetChatMessage
-Headers:
-  content-type: application/grpc
-  te: trailers
-  x-codeium-csrf-token: {csrf_token}
+content-type: application/grpc
+te: trailers
+grpc-accept-encoding: identity,gzip
+x-codeium-csrf-token: {csrf_token}
 ```
 
-### Request Format (RawGetChatMessageRequest)
-Hand-encoded protobuf (no library):
-- Field 1: `Metadata` message (api_key, ide_name, ide_version, extension_version, session_id, locale)
-- Field 2: `ChatMessage` repeated (message_id, source enum, timestamp, conversation_id, intent/text)
-- Field 3: `system_prompt_override` string (if system message present)
-- Field 4: `chat_model` varint (model enum value)
-- Field 5: `chat_model_name` string (optional, for variant fidelity)
+All requests use standard gRPC framing: `[1B: compression flag] [4B: big-endian length] [N bytes: protobuf]`.
 
-### Response Format (RawGetChatMessageResponse)
-gRPC-framed protobuf:
-- Field 1: `delta_message` (RawChatMessage)
-  - Field 5: `text` string (the content we extract)
+### Cascade API (3-step flow)
 
-### Message Encoding Rules
-- User/system/tool messages: wrapped in `ChatMessageIntent` → `IntentGeneric` (field 5 as nested message)
-- Assistant messages: plain text in field 5 (no intent wrapper)
-- Source enum: USER=1, SYSTEM=2, ASSISTANT=3, TOOL=4
+#### 1. StartCascade
+```
+POST /exa.language_server_pb.LanguageServerService/StartCascade
+Body (protobuf):
+  field 1 (message): Metadata
+  field 4 (varint):  3  ← WINDSURF_CHAT source
+Response field 1 (string): cascade_id (UUID)
+```
+
+#### 2. SendUserCascadeMessage
+```
+POST /exa.language_server_pb.LanguageServerService/SendUserCascadeMessage
+Body (protobuf):
+  field 1 (string):  cascade_id
+  field 2 (message): TextOrScopeItem { field 1 (string): user_text }
+  field 3 (message): Metadata
+  field 5 (message): CascadeConfig {
+    field 1 (message): CascadePlannerConfig {
+      field 2 (message): CascadeConversationalPlannerConfig {}  ← empty, selects conv. mode
+      field 35 (string): requested_model_uid  ← e.g. "MODEL_CLAUDE_3_5_SONNET_20241022"
+    }
+  }
+Response: empty (cascade_config is REQUIRED — server panics without it)
+```
+
+#### 3. Poll GetCascadeTrajectorySteps
+```
+POST /exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps
+Body (protobuf):
+  field 1 (string): cascade_id
+  field 2 (varint): 0  ← step_offset
+Response field 1 (repeated message): CortexTrajectoryStep {
+  field 20 (message): CortexStepPlannerResponse {  ← oneof "step", present when AI responds
+    field 1 (string): response          ← AI text
+    field 8 (string): modified_response ← prefer if non-empty
+    field 3 (string): thinking          ← chain-of-thought (thinking models)
+  }
+}
+```
+
+Poll every 1.5s, up to 90s. Response typically arrives within ~3s (2 poll attempts).
 
 ## Dynamic Field Discovery (discovery.ts)
 
