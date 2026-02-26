@@ -1,5 +1,5 @@
 {
-  "name": "opencode-windsurf-auth",
+  "name": "@essentinal/opencode-windsurf-auth",
   "version": "0.1.0",
   "description": "OpenCode plugin for Windsurf/Codeium authentication - use Windsurf models in OpenCode",
   "type": "module",
@@ -8,12 +8,17 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [
     "dist"
   ],
+  "bin": {
+    "windsurf-proxy": "./bin/proxy.js"
+  },
   "packageManager": "bun@1.2.14",
   "scripts": {
     "build": "bun run tsc -p tsconfig.build.json",
@@ -23,7 +28,8 @@
     "test:request": "bun run tests/live/request.ts",
     "test:analyze": "bun run tests/live/analyze.ts",
     "clean": "rm -rf dist",
-    "extract-models": "bun run scripts/extract-models.ts"
+    "extract-models": "bun run scripts/extract-models.ts",
+    "proxy": "bun run src/server.ts"
   },
   "keywords": [
     "opencode",

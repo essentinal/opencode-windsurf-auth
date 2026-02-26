@@ -2,7 +2,7 @@
 
 > **Note**: This specification is based on reverse-engineering of the Windsurf extension.
 > It may be incomplete or change with Windsurf updates.
-> Last updated: 2026-02-22
+> Last updated: 2026-02-24
 
 ## Overview
 
@@ -106,26 +106,29 @@ Runs on localhost, handles IDE operations and proxies inference.
 
 ```protobuf
 service LanguageServerService {
-  // Chat — THIS IS WHAT THE PLUGIN USES
-  rpc RawGetChatMessage(RawGetChatMessageRequest) returns (stream RawGetChatMessageResponse);
-  
-  // Standard chat
-  rpc GetChatMessage(GetChatMessageRequest) returns (GetChatMessageResponse);
-  rpc SendUserCascadeMessage(SendUserCascadeMessageRequest) returns (SendUserCascadeMessageResponse);
+  // Cascade API — WHAT THIS PLUGIN USES
   rpc StartCascade(StartCascadeRequest) returns (StartCascadeResponse);
-  rpc StreamCascadeReactiveUpdates(StreamCascadeReactiveUpdatesRequest) returns (stream CascadeReactiveUpdate);
-  
+  rpc SendUserCascadeMessage(SendUserCascadeMessageRequest) returns (SendUserCascadeMessageResponse);
+  rpc GetCascadeTrajectorySteps(GetCascadeTrajectoryStepsRequest) returns (GetCascadeTrajectoryStepsResponse);
+
+  // Reactive streaming (IDE webview only — external clients use polling above)
+  rpc StreamCascadeReactiveUpdates(StreamReactiveUpdatesRequest) returns (stream StreamReactiveUpdatesResponse);
+  rpc StreamCascadePanelReactiveUpdates(StreamReactiveUpdatesRequest) returns (stream StreamReactiveUpdatesResponse);
+
+  // Legacy chat (still functional)
+  rpc RawGetChatMessage(RawGetChatMessageRequest) returns (stream RawGetChatMessageResponse);
+  rpc GetChatMessage(GetChatMessageRequest) returns (GetChatMessageResponse);
+
   // Completions
   rpc GetCompletions(GetCompletionsRequest) returns (GetCompletionsResponse);
-  rpc GetStreamingCompletions(GetCompletionsRequest) returns (stream GetCompletionsResponse);
-  
+
+  // Trajectory inspection
+  rpc GetCascadeTrajectory(GetCascadeTrajectoryRequest) returns (GetCascadeTrajectoryResponse);
+  rpc GetAllCascadeTrajectories(GetAllCascadeTrajectoriesRequest) returns (GetAllCascadeTrajectoriesResponse);
+
   // Auth
   rpc GetAuthToken(GetAuthTokenRequest) returns (GetAuthTokenResponse);
   rpc GetUserStatus(GetUserStatusRequest) returns (GetUserStatusResponse);
-  rpc RegisterUser(RegisterUserRequest) returns (RegisterUserResponse);
-  
-  // Progress
-  rpc ProgressBars(ProgressBarsRequest) returns (ProgressBarsResponse);
 }
 ```
 
@@ -160,121 +163,135 @@ service ExtensionServerService {
 
 ## Request/Response Formats
 
-### RawGetChatMessageRequest (used by this plugin)
+### Cascade API Flow (used by this plugin)
+
+The plugin uses a 3-step flow: **StartCascade → SendUserCascadeMessage → poll GetCascadeTrajectorySteps**.
+
+> **Why polling instead of `StreamCascadeReactiveUpdates`?**
+> `StreamCascadeReactiveUpdates` only delivers frames to the Windsurf IDE's own webview process
+> (which maintains persistent registered subscriptions). External processes always receive zero frames.
+> `GetCascadeTrajectorySteps` is the correct poll-based alternative for external clients.
+
+#### Step 1: StartCascade
+
+```protobuf
+message StartCascadeRequest {
+  Metadata metadata = 1;   // field 1
+  // field 4: source enum (3 = WINDSURF_CHAT)
+}
+
+message StartCascadeResponse {
+  string cascade_id = 1;   // UUID identifying this session
+}
+```
+
+#### Step 2: SendUserCascadeMessage
+
+```protobuf
+message SendUserCascadeMessageRequest {
+  string cascade_id = 1;
+  repeated TextOrScopeItem items = 2;   // user message(s)
+  Metadata metadata = 3;
+  CascadeConfig cascade_config = 5;     // REQUIRED — server panics without it
+}
+
+message TextOrScopeItem {
+  string text = 1;          // plain text message
+}
+
+message CascadeConfig {
+  CascadePlannerConfig planner_config = 1;
+}
+
+message CascadePlannerConfig {
+  CascadeConversationalPlannerConfig conversational = 2;  // empty {} — selects conversational mode
+  string requested_model_uid = 35;  // e.g. "MODEL_CLAUDE_3_5_SONNET_20241022" or "CASCADE_BASE"
+}
+
+message CascadeConversationalPlannerConfig {
+  // empty — just selecting the conversational planner type
+}
+
+message SendUserCascadeMessageResponse {
+  // empty — response arrives via polling, not here
+}
+```
+
+**`requested_model_uid` format**: Proto enum string name with `MODEL_` prefix, e.g.:
+- `"MODEL_CLAUDE_3_5_SONNET_20241022"` (enum 166)
+- `"MODEL_SWE_1_5"` (enum 359)
+- `"CASCADE_BASE"` (IDE default alias — also accepted)
+
+#### Step 3: Poll GetCascadeTrajectorySteps
+
+```protobuf
+message GetCascadeTrajectoryStepsRequest {
+  string cascade_id = 1;
+  uint32 step_offset = 2;   // start from 0
+}
+
+message GetCascadeTrajectoryStepsResponse {
+  repeated CortexTrajectoryStep steps = 1;
+}
+
+message CortexTrajectoryStep {
+  // oneof "step" — field 20 is the AI text response:
+  CortexStepPlannerResponse planner_response = 20;
+  // other step types: finish(12), plan_input(8), write_to_file(23), etc.
+
+  // metadata fields present on all steps:
+  // field 1: step_id (string)
+  // field 4: status enum
+  // field 5: step metadata message
+}
+
+message CortexStepPlannerResponse {
+  string response = 1;           // the AI-generated text
+  string modified_response = 8;  // post-processed version (prefer this if non-empty)
+  string thinking = 3;           // chain-of-thought (for thinking models)
+  string message_id = 6;
+}
+```
+
+**Poll strategy**: Call every 1.5s, up to 90s. Response typically arrives within 3s (2 poll attempts).
+
+### StreamCascadeReactiveUpdates (IDE webview only)
+
+```protobuf
+message StreamReactiveUpdatesRequest {
+  uint32 protocol_version = 1;   // must be 1
+  string id = 2;                 // cascade_id
+}
+
+message StreamReactiveUpdatesResponse {
+  int32 version = 1;
+  // field 2: diff (reactive CRDT diff)
+  bytes full_state = 3;          // full serialized state blob
+}
+```
+
+**Important**: Only accepts one request message per stream. Sending a second write causes error 12
+(`unimplemented: unary request has multiple messages`). The stream is half-duplex from the client side.
+
+### RawGetChatMessage (legacy — still functional)
 
 ```protobuf
 message RawGetChatMessageRequest {
   Metadata metadata = 1;
   repeated ChatMessage chat_messages = 2;
-  string system_prompt_override = 3;   // System message content
-  int32 chat_model = 4;               // Model enum value (varint)
-  string chat_model_name = 5;         // Model name string (for variant fidelity)
-}
-```
-
-### ChatMessage (used in RawGetChatMessageRequest)
-
-```protobuf
-message ChatMessage {
-  string message_id = 1;              // UUID, required
-  ChatMessageSource source = 2;       // Enum: 1=USER, 2=SYSTEM, 3=ASSISTANT, 4=TOOL
-  google.protobuf.Timestamp timestamp = 3;  // Required
-  string conversation_id = 4;         // UUID, required
-  // Field 5 is overloaded by source type:
-  //   USER/SYSTEM/TOOL: ChatMessageIntent (nested message)
-  //   ASSISTANT: string (plain text)
-  oneof content_field {
-    ChatMessageIntent intent = 5;      // For USER/SYSTEM/TOOL
-    string text = 5;                   // For ASSISTANT
-  }
+  string system_prompt_override = 3;
+  int32 chat_model = 4;          // Model enum value
+  string chat_model_name = 5;    // Optional model name string
 }
 
-message ChatMessageIntent {
-  IntentGeneric generic = 1;           // oneof intent type
-}
-
-message IntentGeneric {
-  string text = 1;                     // The actual user/system text
-}
-
-enum ChatMessageSource {
-  UNSPECIFIED = 0;
-  USER = 1;
-  SYSTEM = 2;
-  ASSISTANT = 3;
-  TOOL = 4;
-}
-```
-
-### RawGetChatMessageResponse (streaming)
-
-```protobuf
 message RawGetChatMessageResponse {
-  RawChatMessage delta_message = 1;    // Incremental response chunk
+  RawChatMessage delta_message = 1;
 }
 
 message RawChatMessage {
-  string message_id = 1;
-  ChatMessageSource source = 2;
-  google.protobuf.Timestamp timestamp = 3;
-  string conversation_id = 4;
-  string text = 5;                     // The content delta we extract
+  string text = 5;               // The streamed content delta
   bool in_progress = 6;
   bool is_error = 7;
-}
-```
-
-### GetChatMessageRequest (standard Cascade format)
-
-```protobuf
-message GetChatMessageRequest {
-  Metadata metadata = 1;
-  string cascade_id = 2;
-  ModelOrAlias model_or_alias = 3;
-  repeated StandardChatMessage messages = 4;
-  repeated ChatToolDefinition tools = 5;
-  ChatToolChoice tool_choice = 6;
-  EnterpriseExternalModelConfig enterprise_config = 7;
-  PromptCacheOptions cache_options = 8;
-}
-
-message StandardChatMessage {
-  string role = 1;                     // "user", "assistant", "system", "tool"
-  string content = 2;
-  string tool_call_id = 3;
-  repeated ChatToolCall tool_calls = 4;
-}
-
-message ChatToolCall {
-  string id = 1;
-  string name = 2;
-  string arguments = 3;               // JSON string
-}
-```
-
-### Streaming Response (standard format)
-
-```protobuf
-message CompletionChunk {
-  oneof chunk {
-    ContentChunk content = 1;
-    ToolCallChunk tool_call = 2;
-    DoneChunk done = 3;
-    ErrorChunk error = 4;
-  }
-}
-
-message ContentChunk {
-  string text = 1;
-}
-
-message DoneChunk {
-  UsageStats usage = 1;
-}
-
-message UsageStats {
-  int32 prompt_tokens = 1;
-  int32 completion_tokens = 2;
 }
 ```
 

@@ -1,14 +1,22 @@
 /**
  * gRPC Client for Windsurf Language Server
- * 
- * Implements HTTP/2-based gRPC communication with the local Windsurf language server.
+ *
+ * Implements the Cascade session flow:
+ *   1. StartCascade → get cascadeId
+ *   2. SendUserCascadeMessage → trigger cloud inference
+ *   3. Poll GetCascadeTrajectorySteps → extract planner_response text
+ *
+ * Note: StreamCascadeReactiveUpdates only works for IDE's own webview.
+ * External clients must use GetCascadeTrajectorySteps polling instead.
+ *
  * Uses manual protobuf encoding (no external protobuf library needed).
  */
 
 import * as http2 from 'http2';
 import * as crypto from 'crypto';
-import { ChatMessageSource } from './types.js';
-import { resolveModel } from './models.js';
+import * as zlib from 'zlib';
+import * as os from 'os';
+import { resolveModel, enumToProtoName } from './models.js';
 import { WindsurfCredentials, WindsurfError, WindsurfErrorCode } from './auth.js';
 
 // ============================================================================
@@ -28,6 +36,12 @@ export interface StreamChatOptions {
   onError?: (error: Error) => void;
   variantOverride?: string;
 }
+
+const GRPC_METHODS = {
+  startCascade: '/exa.language_server_pb.LanguageServerService/StartCascade',
+  sendUserCascadeMessage: '/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage',
+  getCascadeTrajectorySteps: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+};
 
 // ============================================================================
 // Protobuf Encoding Helpers
@@ -52,21 +66,21 @@ function encodeVarint(value: number | bigint): number[] {
  */
 function encodeString(fieldNum: number, str: string): number[] {
   const strBytes = Buffer.from(str, 'utf8');
-  return [(fieldNum << 3) | 2, ...encodeVarint(strBytes.length), ...strBytes];
+  return [...encodeVarint((fieldNum << 3) | 2), ...encodeVarint(strBytes.length), ...strBytes];
 }
 
 /**
  * Encode a nested message field (wire type 2: length-delimited)
  */
 function encodeMessage(fieldNum: number, data: number[]): number[] {
-  return [(fieldNum << 3) | 2, ...encodeVarint(data.length), ...data];
+  return [...encodeVarint((fieldNum << 3) | 2), ...encodeVarint(data.length), ...data];
 }
 
 /**
  * Encode a varint field (wire type 0)
  */
 function encodeVarintField(fieldNum: number, value: number | bigint): number[] {
-  return [(fieldNum << 3) | 0, ...encodeVarint(value)];
+  return [...encodeVarint((fieldNum << 3) | 0), ...encodeVarint(value)];
 }
 
 // ============================================================================
@@ -74,86 +88,86 @@ function encodeVarintField(fieldNum: number, value: number | bigint): number[] {
 // ============================================================================
 
 /**
- * Generate a UUID for message and conversation IDs
+ * Encode CascadeConfig required by SendUserCascadeMessage.
+ * Without this field the LS panics: "invalid value: merging into nil message".
+ *
+ * CascadeConfig (field 1 = planner_config):
+ *   CascadePlannerConfig:
+ *     field 2  = conversational (CascadeConversationalPlannerConfig, empty)
+ *     field 35 = requested_model_uid (string)
  */
-function generateUUID(): string {
-  return crypto.randomUUID();
+function encodeCascadeConfig(modelUid: string): number[] {
+  const conversational: number[] = []; // empty CascadeConversationalPlannerConfig
+  const plannerConfig: number[] = [
+    ...encodeMessage(2, conversational),
+    ...(modelUid ? encodeString(35, modelUid) : []),
+  ];
+  return encodeMessage(1, plannerConfig);
 }
 
 /**
- * Encode a google.protobuf.Timestamp
- * Field 1: seconds (int64)
- * Field 2: nanos (int32)
+ * Build a gRPC frame: compression(0) + 4-byte BE length + payload.
  */
-function encodeTimestamp(): number[] {
-  const now = Date.now();
-  const seconds = Math.floor(now / 1000);
-  const nanos = (now % 1000) * 1_000_000;
+function makeGrpcFrame(bytes: number[]): Buffer {
+  const payload = Buffer.from(bytes);
+  const frame = Buffer.alloc(5 + payload.length);
+  frame[0] = 0;
+  frame.writeUInt32BE(payload.length, 1);
+  payload.copy(frame, 5);
+  return frame;
+}
 
-  const bytes: number[] = [];
-  bytes.push(...encodeVarintField(1, seconds));
-  if (nanos > 0) {
-    bytes.push(...encodeVarintField(2, nanos));
+/**
+ * StartCascadeRequest:
+ *   field 1: metadata
+ *   field 4: source uint32 = 3 (WINDSURF_CHAT)
+ */
+function buildStartCascadeRequest(metadata: number[]): Buffer {
+  return makeGrpcFrame([
+    ...encodeMessage(1, metadata),
+    ...encodeVarintField(4, 3),
+  ]);
+}
+
+/**
+ * SendUserCascadeMessageRequest:
+ *   field 1: cascade_id (string)
+ *   field 2: items (TextOrScopeItem — field 1 = text string)
+ *   field 3: metadata
+ *   field 5: cascade_config (required)
+ */
+function buildSendUserCascadeMessageRequest(
+  cascadeId: string,
+  messages: ChatMessage[],
+  metadata: number[],
+  modelUid: string,
+): Buffer {
+  const systemParts: string[] = [];
+  const userParts: string[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'system') systemParts.push(msg.content);
+    else if (msg.role === 'user') userParts.push(msg.content);
   }
-  return bytes;
+  const text = [...systemParts, ...userParts].join('\n\n') || 'Hello';
+
+  return makeGrpcFrame([
+    ...encodeString(1, cascadeId),
+    ...encodeMessage(2, encodeString(1, text)), // TextOrScopeItem.text
+    ...encodeMessage(3, metadata),
+    ...encodeMessage(5, encodeCascadeConfig(modelUid)),
+  ]);
 }
 
 /**
- * Encode IntentGeneric message
- * Field 1: text (string)
+ * StreamCascadeReactiveUpdatesRequest:
+ *   field 1: protocol_version uint32 = 1
+ *   field 2: id (cascade_id string)
  */
-function encodeIntentGeneric(text: string): number[] {
-  return encodeString(1, text);
-}
-
-/**
- * Encode ChatMessageIntent message
- * Field 1: generic (IntentGeneric, oneof)
- * Field 12: num_tokens (int32)
- */
-function encodeChatMessageIntent(text: string): number[] {
-  const generic = encodeIntentGeneric(text);
-  return encodeMessage(1, generic);
-}
-
-/**
- * Encode a ChatMessage for the RawGetChatMessageRequest
- * 
- * ChatMessage structure (from reverse engineering):
- * Field 1: message_id (string, required)
- * Field 2: source (enum: 1=USER, 2=SYSTEM, 3=ASSISTANT)
- * Field 3: timestamp (google.protobuf.Timestamp, required)
- * Field 4: conversation_id (string, required)
- * Field 5: For USER/SYSTEM/TOOL: intent (ChatMessageIntent)
- *          For ASSISTANT: text (string)
- */
-function encodeChatMessage(content: string, source: number, conversationId: string): number[] {
-  const messageId = generateUUID();
-  const bytes: number[] = [];
-
-  // Field 1: message_id (required)
-  bytes.push(...encodeString(1, messageId));
-
-  // Field 2: source
-  bytes.push(...encodeVarintField(2, source));
-
-  // Field 3: timestamp (required)
-  const timestamp = encodeTimestamp();
-  bytes.push(...encodeMessage(3, timestamp));
-
-  // Field 4: conversation_id (required)
-  bytes.push(...encodeString(4, conversationId));
-
-  // Field 5: content
-  if (source === ChatMessageSource.ASSISTANT) {
-    // Assistant replies use plain text field
-    bytes.push(...encodeString(5, content));
-  } else {
-    const intent = encodeChatMessageIntent(content);
-    bytes.push(...encodeMessage(5, intent));
-  }
-
-  return bytes;
+function buildStreamRequest(cascadeId: string): Buffer {
+  return makeGrpcFrame([
+    ...encodeVarintField(1, 1),
+    ...encodeString(2, cascadeId),
+  ]);
 }
 
 /**
@@ -169,415 +183,242 @@ function encodeChatMessage(content: string, source: number, conversationId: stri
  */
 import { getMetadataFields } from './discovery.js';
 
+// Per-proxy session ID (stable within a proxy process lifetime, like the official extension)
+const PROXY_SESSION_ID = crypto.randomUUID();
+let requestCounter = 0;
+
+/**
+ * Compute device fingerprint matching extension.js generateFingerprint():
+ * sha256(sorted(macs).join(",") + "," + serial + "," + username)
+ */
+function computeDeviceFingerprint(): string {
+  try {
+    const ifaces = os.networkInterfaces();
+    const macs: string[] = [];
+    for (const addrs of Object.values(ifaces)) {
+      for (const addr of (addrs ?? [])) {
+        if (addr.mac && addr.mac !== '00:00:00:00:00:00') macs.push(addr.mac);
+      }
+    }
+    const uniqueMacs = [...new Set(macs)].sort();
+    const username = os.userInfo().username;
+    const n = { macs: uniqueMacs.join(','), serial: '', username };
+    const input = Object.keys(n).sort().map(k => (n as Record<string, string>)[k]).join(',');
+    return crypto.createHash('sha256').update(input).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
+const DEVICE_FINGERPRINT = computeDeviceFingerprint();
+
 /**
  * Build the metadata message for the request
- * Dynamically maps fields using discovered extension.js values
+ * Dynamically maps fields using discovered extension.js values.
+ * Field numbers from extension.js MetadataProvider:
+ *   1=ide_name, 2=extension_version, 3=api_key, 4=locale, 5=os,
+ *   7=ide_version, 9=request_id, 10=session_id, 12=extension_name,
+ *   24=device_fingerprint, 28=ide_type
  */
 function encodeMetadata(apiKey: string, version: string): number[] {
   const fields = getMetadataFields();
+  requestCounter++;
 
-  return [
-    ...encodeString(fields.api_key, apiKey),                    // api_key
-    ...encodeString(fields.ide_name, 'windsurf'),               // ide_name
-    ...encodeString(fields.ide_version, version),               // ide_version
-    ...encodeString(fields.extension_version, version),         // extension_version
-    // Optional fields
-    ...(fields.session_id ? encodeString(fields.session_id, generateUUID()) : []),
-    ...(fields.locale ? encodeString(fields.locale, 'en') : []),
-    // Add extension_name equivalent if needed (often mapped to 12 in older versions or same as ide_name)
-    // For safety, we only encode defined discovered fields
+  const os = process.platform === 'darwin' ? 'macos'
+    : process.platform === 'win32' ? 'windows'
+    : 'linux';
+
+  const meta = [
+    ...encodeString(fields.api_key, apiKey),                         // api_key (3)
+    ...encodeString(fields.ide_name, 'windsurf'),                    // ide_name (1)
+    ...encodeString(fields.ide_version, version),                    // ide_version (7)
+    ...encodeString(fields.extension_version, version),              // extension_version (2)
+    ...encodeString(fields.session_id, PROXY_SESSION_ID),            // session_id (10)
+    ...encodeString(fields.locale, 'en'),                            // locale (4)
+    ...encodeString(12, 'windsurf'),                                 // extension_name (12)
+    ...encodeString(5, os),                                          // os (5)
+    ...encodeVarintField(9, requestCounter),                         // request_id (9)
   ];
+
+  if (DEVICE_FINGERPRINT) {
+    meta.push(...encodeString(24, DEVICE_FINGERPRINT));              // device_fingerprint (24)
+  }
+
+  return meta;
 }
 
-/**
- * Map role string to ChatMessageSource enum value
- */
-function roleToSource(role: string): number {
-  switch (role) {
-    case 'user':
-      return ChatMessageSource.USER;
-    case 'assistant':
-      return ChatMessageSource.ASSISTANT;
-    case 'system':
-      return ChatMessageSource.SYSTEM;
-    case 'tool':
-      return ChatMessageSource.TOOL;
-    default:
-      return ChatMessageSource.USER;
-  }
-}
-
-/**
- * Build the complete chat request buffer using RawGetChatMessageRequest format
- * 
- * RawGetChatMessageRequest structure:
- * Field 1: metadata (Metadata message)
- * Field 2: chat_messages (repeated ChatMessage)
- * Field 3: system_prompt_override (string) - optional
- * Field 4: chat_model (enum: Model)
- * Field 5: chat_model_name (string) - optional
- */
-function buildChatRequest(
-  apiKey: string,
-  version: string,
-  modelEnum: number,
-  messages: ChatMessage[],
-  modelName?: string
-): Buffer {
-  const metadata = encodeMetadata(apiKey, version);
-  const conversationId = generateUUID();
-
-  // Build the request with all messages
-  const request: number[] = [];
-
-  // Field 1: metadata
-  request.push(...encodeMessage(1, metadata));
-
-  // Field 2: chat_messages (repeated ChatMessage)
-  // Extract system message if present and handle separately
-  let systemPrompt = '';
-  for (const msg of messages) {
-    if (msg.role === 'system') {
-      systemPrompt = msg.content;
-    } else {
-      // Encode each message as ChatMessage with ChatMessageIntent
-      const source = roleToSource(msg.role);
-      const chatMsg = encodeChatMessage(msg.content, source, conversationId);
-      request.push(...encodeMessage(2, chatMsg));
-    }
-  }
-
-  // Field 3: system_prompt_override (if we have a system message)
-  if (systemPrompt) {
-    request.push(...encodeString(3, systemPrompt));
-  }
-
-  // Field 4: model enum
-  request.push(...encodeVarintField(4, modelEnum));
-
-  // Field 5: chat_model_name (string) if provided
-  if (modelName) {
-    request.push(...encodeString(5, modelName));
-  }
-
-  const payload = Buffer.from(request);
-
-  // gRPC framing: 1 byte compression flag (0) + 4 bytes length + payload
-  const frame = Buffer.alloc(5 + payload.length);
-  frame[0] = 0; // No compression
-  frame.writeUInt32BE(payload.length, 1);
-  payload.copy(frame, 5);
-
-  return frame;
-}
 
 // ============================================================================
-// Response Parsing (Protobuf Decoding)
+// Response Parsing (GetCascadeTrajectorySteps polling)
 // ============================================================================
 
 /**
- * Decode a varint from a buffer starting at offset
- * @returns [value, bytesRead]
+ * Decompress a gRPC frame if needed (compression flag = 1 → gzip).
  */
-function decodeVarint(buffer: Buffer, offset: number): [bigint, number] {
-  let result = 0n;
-  let shift = 0n;
-  let bytesRead = 0;
-
-  while (offset + bytesRead < buffer.length) {
-    const byte = buffer[offset + bytesRead];
-    bytesRead++;
-    result |= BigInt(byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) {
-      break;
-    }
-    shift += 7n;
+function decompressFrame(comp: number, data: Buffer): Buffer {
+  if (comp === 1) {
+    try { return zlib.gunzipSync(data); } catch { return data; }
   }
+  return data;
+}
 
-  return [result, bytesRead];
+type ProtoField = { field: number; wire: number; value: Buffer | bigint };
+
+/**
+ * Parse top-level protobuf fields from a buffer.
+ */
+function parseProtoFields(buf: Buffer): ProtoField[] {
+  const fields: ProtoField[] = [];
+  let p = 0;
+  while (p < buf.length) {
+    let tag = 0, shift = 0, start = p;
+    while (p < buf.length) { const b = buf[p++]; tag |= (b & 0x7f) << shift; shift += 7; if (!(b & 0x80)) break; }
+    if (p === start) break;
+    const wire = tag & 7, field = tag >> 3;
+    if (wire === 2) {
+      let l = 0, sh = 0;
+      while (p < buf.length) { const b = buf[p++]; l |= (b & 0x7f) << sh; sh += 7; if (!(b & 0x80)) break; }
+      if (p + l > buf.length) break;
+      fields.push({ field, wire, value: buf.subarray(p, p + l) }); p += l;
+    } else if (wire === 0) {
+      let v = 0n, sh = 0n;
+      while (p < buf.length) { const b = buf[p++]; v |= BigInt(b & 0x7f) << sh; sh += 7n; if (!(b & 0x80)) break; }
+      fields.push({ field, wire, value: v });
+    } else if (wire === 1) { fields.push({ field, wire, value: buf.subarray(p, p + 8) }); p += 8; }
+    else if (wire === 5) { fields.push({ field, wire, value: buf.subarray(p, p + 4) }); p += 4; }
+    else break;
+  }
+  return fields;
 }
 
 /**
- * Parse a protobuf field from buffer
- * @returns { fieldNum, wireType, value, bytesConsumed } or null if can't parse
+ * Decode all gRPC frames from a response buffer, decompressing as needed.
  */
-function parseProtobufField(buffer: Buffer, offset: number): {
-  fieldNum: number;
-  wireType: number;
-  value: Buffer | bigint;
-  bytesConsumed: number
-} | null {
-  if (offset >= buffer.length) return null;
+function decodeGrpcFrames(buf: Buffer): Buffer[] {
+  const out: Buffer[] = [];
+  let pos = 0;
+  while (pos + 5 <= buf.length) {
+    const comp = buf[pos];
+    const flen = buf.readUInt32BE(pos + 1);
+    if (pos + 5 + flen > buf.length) break;
+    out.push(decompressFrame(comp, buf.subarray(pos + 5, pos + 5 + flen)));
+    pos += 5 + flen;
+  }
+  return out;
+}
 
-  const [tag, tagBytes] = decodeVarint(buffer, offset);
-  const fieldNum = Number(tag >> 3n);
-  const wireType = Number(tag & 0x7n);
+/**
+ * Extract cascade_id from a StartCascadeResponse frame (field 1 = cascade_id).
+ */
+function extractCascadeId(data: Buffer): string {
+  for (const f of parseProtoFields(data)) {
+    if (f.field === 1 && Buffer.isBuffer(f.value)) return f.value.toString('utf8');
+  }
+  return '';
+}
 
-  let bytesConsumed = tagBytes;
-  let value: Buffer | bigint;
-
-  switch (wireType) {
-    case 0: // Varint
-      const [varintValue, varintBytes] = decodeVarint(buffer, offset + bytesConsumed);
-      value = varintValue;
-      bytesConsumed += varintBytes;
-      break;
-
-    case 2: // Length-delimited (string, bytes, embedded message)
-      const [length, lengthBytes] = decodeVarint(buffer, offset + bytesConsumed);
-      bytesConsumed += lengthBytes;
-      const len = Number(length);
-      if (offset + bytesConsumed + len > buffer.length) {
-        // Not enough data
-        return null;
+/**
+ * Extract planner_response text from GetCascadeTrajectoryStepsResponse.
+ *
+ * Response structure:
+ *   GetCascadeTrajectoryStepsResponse
+ *     field 1 (repeated): CortexTrajectoryStep
+ *       field 20 (oneof "step"): CortexStepPlannerResponse
+ *         field 1: response (string)   ← the AI text
+ *         field 8: modified_response (string)
+ *
+ * Returns the last non-empty planner_response text found, or '' if none.
+ */
+function extractPlannerResponse(buf: Buffer): string {
+  let result = '';
+  for (const frame of decodeGrpcFrames(buf)) {
+    for (const f1 of parseProtoFields(frame)) {
+      if (f1.field !== 1 || !Buffer.isBuffer(f1.value)) continue; // steps[]
+      for (const f2 of parseProtoFields(f1.value)) {
+        if (f2.field !== 20 || !Buffer.isBuffer(f2.value)) continue; // planner_response
+        for (const f3 of parseProtoFields(f2.value)) {
+          if (Buffer.isBuffer(f3.value)) {
+            if (f3.field === 1) { // response
+              const t = f3.value.toString('utf8');
+              if (t) result = t;
+            }
+            if (f3.field === 8) { // modified_response (overrides response)
+              const t = f3.value.toString('utf8');
+              if (t) result = t;
+            }
+          }
+        }
       }
-      value = buffer.subarray(offset + bytesConsumed, offset + bytesConsumed + len);
-      bytesConsumed += len;
-      break;
-
-    case 1: // 64-bit (fixed64, sfixed64, double)
-      if (offset + bytesConsumed + 8 > buffer.length) return null;
-      value = buffer.subarray(offset + bytesConsumed, offset + bytesConsumed + 8);
-      bytesConsumed += 8;
-      break;
-
-    case 5: // 32-bit (fixed32, sfixed32, float)
-      if (offset + bytesConsumed + 4 > buffer.length) return null;
-      value = buffer.subarray(offset + bytesConsumed, offset + bytesConsumed + 4);
-      bytesConsumed += 4;
-      break;
-
-    default:
-      // Unknown wire type, can't parse
-      return null;
-  }
-
-  return { fieldNum, wireType, value, bytesConsumed };
-}
-
-/**
- * Extract text from RawChatMessage protobuf
- * 
- * RawChatMessage structure:
- * Field 1: message_id (string)
- * Field 2: source (enum)
- * Field 3: timestamp (message)
- * Field 4: conversation_id (string)
- * Field 5: text (string) ← What we want
- * Field 6: in_progress (bool)
- * Field 7: is_error (bool)
- */
-function extractTextFromRawChatMessage(buffer: Buffer): string {
-  let offset = 0;
-
-  while (offset < buffer.length) {
-    const field = parseProtobufField(buffer, offset);
-    if (!field) break;
-
-    offset += field.bytesConsumed;
-
-    // Field 5 is the text content
-    if (field.fieldNum === 5 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
-      return field.value.toString('utf8');
     }
   }
-
-  return '';
-}
-
-/**
- * Extract text from RawGetChatMessageResponse protobuf
- * 
- * RawGetChatMessageResponse structure:
- * Field 1: delta_message (RawChatMessage)
- */
-function extractTextFromResponse(buffer: Buffer): string {
-  let offset = 0;
-
-  while (offset < buffer.length) {
-    const field = parseProtobufField(buffer, offset);
-    if (!field) break;
-
-    offset += field.bytesConsumed;
-
-    // Field 1 is delta_message (RawChatMessage)
-    if (field.fieldNum === 1 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
-      const text = extractTextFromRawChatMessage(field.value);
-      if (text) return text;
-    }
-  }
-
-  return '';
-}
-
-/**
- * Extract readable text from a gRPC response chunk
- * 
- * The response is gRPC-framed: 1 byte compression + 4 bytes length + protobuf payload
- * We parse the protobuf to extract the text field from RawChatMessage.
- */
-function extractTextFromChunk(chunk: Buffer): string {
-  // gRPC frame: 1 byte compression flag + 4 bytes message length + message
-  // Multiple messages may be concatenated in a single chunk
-
-  const results: string[] = [];
-  let offset = 0;
-
-  while (offset + 5 <= chunk.length) {
-    const compressed = chunk[offset];
-    const messageLength = chunk.readUInt32BE(offset + 1);
-
-    if (compressed !== 0) {
-      // Compressed data not supported, skip
-      offset += 5 + messageLength;
-      continue;
-    }
-
-    if (offset + 5 + messageLength > chunk.length) {
-      // Not enough data for the full message, try as raw protobuf
-      break;
-    }
-
-    const messageData = chunk.subarray(offset + 5, offset + 5 + messageLength);
-    const text = extractTextFromResponse(messageData);
-
-    if (text) {
-      results.push(text);
-    }
-
-    offset += 5 + messageLength;
-  }
-
-  // If we extracted text from proper protobuf parsing, return it
-  if (results.length > 0) {
-    return results.join('');
-  }
-
-  // Fallback: try parsing the entire chunk as protobuf (in case framing was already stripped)
-  const fallbackText = extractTextFromResponse(chunk);
-  if (fallbackText) {
-    return fallbackText;
-  }
-
-  // Last resort: heuristic extraction for edge cases
-  return extractTextHeuristic(chunk);
-}
-
-/**
- * Fallback heuristic text extraction - DISABLED
- * The proper protobuf parsing should handle all cases.
- * If it fails, we return empty rather than risk returning garbage.
- */
-function extractTextHeuristic(_chunk: Buffer): string {
-  // Heuristic extraction is too unreliable and returns garbage metadata.
-  // The proper protobuf parsing (extractTextFromResponse) should work.
-  // If it doesn't, we return empty string rather than corrupted output.
-  return '';
+  return result;
 }
 
 // ============================================================================
-// Streaming API
+// Low-level gRPC helpers
 // ============================================================================
 
-/**
- * Stream chat completion using Promise-based API
- * 
- * @param credentials - Windsurf credentials (csrf, port, apiKey, version)
- * @param options - Chat options including model, messages, and callbacks
- * @returns Promise that resolves to the full response text
- */
-export function streamChat(
-  credentials: WindsurfCredentials,
-  options: StreamChatOptions
-): Promise<string> {
-  const { csrfToken, port, apiKey, version } = credentials;
-  const resolved = resolveModel(options.model);
-  const modelEnum = resolved.enumValue;
-  const modelName = resolved.modelUid ?? (resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId);
-  const body = buildChatRequest(apiKey, version, modelEnum, options.messages, modelName);
+const GRPC_HEADERS = (csrfToken: string) => ({
+  ':method': 'POST',
+  'content-type': 'application/grpc',
+  'te': 'trailers',
+  'grpc-accept-encoding': 'identity,gzip',
+  'x-codeium-csrf-token': csrfToken,
+});
 
+function newClient(port: number): http2.ClientHttp2Session {
+  return http2.connect(`http://127.0.0.1:${port}`);
+}
+
+/**
+ * Perform a unary gRPC call and return the full response buffer + grpc-status.
+ */
+async function grpcUnary(
+  port: number,
+  csrfToken: string,
+  path: string,
+  body: Buffer,
+): Promise<{ buf: Buffer; status: string; message: string }> {
   return new Promise((resolve, reject) => {
-    const client = http2.connect(`http://localhost:${port}`);
-    const chunks: string[] = [];
-
-    client.on('error', (err) => {
-      options.onError?.(err);
-      reject(new WindsurfError(
-        `Connection failed: ${err.message}`,
-        WindsurfErrorCode.CONNECTION_FAILED,
-        err
-      ));
+    const client = newClient(port);
+    client.on('error', (e) => reject(e));
+    const r = client.request({ ...GRPC_HEADERS(csrfToken), ':path': path });
+    let buf = Buffer.alloc(0);
+    let status = '0', message = '';
+    r.on('response', () => {});
+    r.on('data', (c: Buffer) => { buf = Buffer.concat([buf, c]); });
+    r.on('trailers', (t) => {
+      status = String(t['grpc-status'] ?? '0');
+      message = decodeURIComponent(String(t['grpc-message'] ?? ''));
     });
-
-    client.on('connect', () => {
-      const req = client.request({
-        ':method': 'POST',
-        ':path': '/exa.language_server_pb.LanguageServerService/RawGetChatMessage',
-        'content-type': 'application/grpc',
-        'te': 'trailers',
-        'x-codeium-csrf-token': csrfToken,
-      });
-
-      req.on('data', (chunk: Buffer) => {
-        const text = extractTextFromChunk(chunk);
-        if (text) {
-          chunks.push(text);
-          options.onChunk?.(text);
-        }
-      });
-
-      req.on('trailers', (trailers) => {
-        const status = trailers['grpc-status'];
-        if (status !== '0') {
-          const message = trailers['grpc-message'];
-          const err = new WindsurfError(
-            `gRPC error ${status}: ${message ? decodeURIComponent(message as string) : 'Unknown error'}`,
-            WindsurfErrorCode.STREAM_ERROR
-          );
-          options.onError?.(err);
-          reject(err);
-        }
-      });
-
-      req.on('end', () => {
-        client.close();
-        const fullText = chunks.join('');
-        options.onComplete?.(fullText);
-        resolve(fullText);
-      });
-
-      req.on('error', (err) => {
-        client.close();
-        options.onError?.(err);
-        reject(new WindsurfError(
-          `Request failed: ${err.message}`,
-          WindsurfErrorCode.STREAM_ERROR,
-          err
-        ));
-      });
-
-      req.write(body);
-      req.end();
-    });
-
-    // Timeout after 2 minutes
-    setTimeout(() => {
-      client.close();
-      const fullText = chunks.join('');
-      options.onComplete?.(fullText);
-      resolve(fullText);
-    }, 120000);
+    r.on('end', () => { client.close(); resolve({ buf, status, message }); });
+    r.on('error', (e) => { client.close(); reject(e); });
+    r.write(body);
+    r.end();
   });
 }
 
+// ============================================================================
+// Cascade API
+// ============================================================================
+
+const POLL_INTERVAL_MS = 1_500;
+const POLL_MAX_ATTEMPTS = 60; // 90s total
+
 /**
- * Stream chat completion using async generator
- * 
- * Yields text chunks as they arrive, for use with SSE streaming.
- * 
- * @param credentials - Windsurf credentials
- * @param options - Chat options (model and messages)
- * @yields Text chunks as they arrive
+ * Execute the full Cascade session flow using polling:
+ *   1. StartCascade (unary) → cascadeId
+ *   2. SendUserCascadeMessage (unary) → triggers cloud inference
+ *   3. Poll GetCascadeTrajectorySteps until planner_response appears
+ *
+ * Note: StreamCascadeReactiveUpdates only works for the IDE's own webview
+ * subscriptions. External processes must poll via GetCascadeTrajectorySteps.
+ *
+ * Response proto path:
+ *   GetCascadeTrajectoryStepsResponse
+ *     .steps[] (field 1, CortexTrajectoryStep)
+ *       .planner_response (field 20, CortexStepPlannerResponse)
+ *         .response (field 1, string)  ← the AI text
  */
 export async function* streamChatGenerator(
   credentials: WindsurfCredentials,
@@ -585,87 +426,94 @@ export async function* streamChatGenerator(
 ): AsyncGenerator<string, void, unknown> {
   const { csrfToken, port, apiKey, version } = credentials;
   const resolved = resolveModel(options.model);
-  const modelEnum = resolved.enumValue;
-  const modelName = resolved.modelUid ?? (resolved.variant ? `${resolved.modelId}:${resolved.variant}` : resolved.modelId);
-  const body = buildChatRequest(apiKey, version, modelEnum, options.messages, modelName);
+  const modelUid = resolved.modelUid ?? enumToProtoName(resolved.enumValue);
+  const metadata = encodeMetadata(apiKey, version);
 
-  const client = http2.connect(`http://localhost:${port}`);
+  // ── Step 1: StartCascade ──────────────────────────────────────────────────
+  const startRes = await grpcUnary(
+    port, csrfToken,
+    GRPC_METHODS.startCascade,
+    buildStartCascadeRequest(metadata),
+  ).catch((e) => { throw new WindsurfError(`StartCascade failed: ${e.message}`, WindsurfErrorCode.CONNECTION_FAILED, e); });
 
-  const chunkQueue: string[] = [];
-  let done = false;
-  let error: Error | null = null;
-  let resolveWait: (() => void) | null = null;
-
-  client.on('error', (err) => {
-    error = new WindsurfError(
-      `Connection failed: ${err.message}`,
-      WindsurfErrorCode.CONNECTION_FAILED,
-      err
-    );
-    done = true;
-    resolveWait?.();
-  });
-
-  const req = client.request({
-    ':method': 'POST',
-    ':path': '/exa.language_server_pb.LanguageServerService/RawGetChatMessage',
-    'content-type': 'application/grpc',
-    'te': 'trailers',
-    'x-codeium-csrf-token': csrfToken,
-  });
-
-  req.on('data', (chunk: Buffer) => {
-    const text = extractTextFromChunk(chunk);
-    if (text) {
-      chunkQueue.push(text);
-      resolveWait?.();
-    }
-  });
-
-  req.on('trailers', (trailers) => {
-    const status = trailers['grpc-status'];
-    if (status !== '0') {
-      const message = trailers['grpc-message'];
-      error = new WindsurfError(
-        `gRPC error ${status}: ${message ? decodeURIComponent(message as string) : 'Unknown error'}`,
-        WindsurfErrorCode.STREAM_ERROR
-      );
-    }
-  });
-
-  req.on('end', () => {
-    done = true;
-    client.close();
-    resolveWait?.();
-  });
-
-  req.on('error', (err) => {
-    error = new WindsurfError(
-      `Request failed: ${err.message}`,
+  if (startRes.status !== '0') {
+    throw new WindsurfError(
+      `StartCascade gRPC error ${startRes.status}: ${startRes.message}`,
       WindsurfErrorCode.STREAM_ERROR,
-      err
     );
-    done = true;
-    client.close();
-    resolveWait?.();
-  });
+  }
 
-  req.write(body);
-  req.end();
+  let cascadeId = '';
+  for (const frame of decodeGrpcFrames(startRes.buf)) {
+    const id = extractCascadeId(frame);
+    if (id) { cascadeId = id; break; }
+  }
+  if (!cascadeId) {
+    throw new WindsurfError('StartCascade returned no cascadeId', WindsurfErrorCode.STREAM_ERROR);
+  }
 
-  // Yield chunks as they arrive
-  while (!done || chunkQueue.length > 0) {
-    if (chunkQueue.length > 0) {
-      yield chunkQueue.shift()!;
-    } else if (!done) {
-      await new Promise<void>((resolve) => {
-        resolveWait = resolve;
-      });
-      resolveWait = null;
+  // ── Step 2: SendUserCascadeMessage ────────────────────────────────────────
+  const sendRes = await grpcUnary(
+    port, csrfToken,
+    GRPC_METHODS.sendUserCascadeMessage,
+    buildSendUserCascadeMessageRequest(cascadeId, options.messages, metadata, modelUid),
+  ).catch((e) => { throw new WindsurfError(`SendUserCascadeMessage failed: ${e.message}`, WindsurfErrorCode.STREAM_ERROR, e); });
+
+  if (sendRes.status !== '0') {
+    throw new WindsurfError(
+      `SendUserCascadeMessage gRPC error ${sendRes.status}: ${sendRes.message}`,
+      WindsurfErrorCode.STREAM_ERROR,
+    );
+  }
+
+  // ── Step 3: Poll GetCascadeTrajectorySteps ────────────────────────────────
+  const pollBody = makeGrpcFrame([
+    ...encodeString(1, cascadeId),
+    ...encodeVarintField(2, 0), // step_offset = 0
+  ]);
+
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+    const pollRes = await grpcUnary(
+      port, csrfToken,
+      GRPC_METHODS.getCascadeTrajectorySteps,
+      pollBody,
+    ).catch(() => null);
+
+    if (!pollRes || pollRes.status !== '0') continue;
+
+    const text = extractPlannerResponse(pollRes.buf);
+    if (text) {
+      yield text;
+      return;
     }
   }
 
-  if (error) {
-    throw error;
+  throw new WindsurfError(
+    `GetCascadeTrajectorySteps: no planner_response after ${POLL_MAX_ATTEMPTS} attempts`,
+    WindsurfErrorCode.STREAM_ERROR,
+  );
+}
+
+/**
+ * Promise-based wrapper around streamChatGenerator for non-streaming callers.
+ */
+export async function streamChat(
+  credentials: WindsurfCredentials,
+  options: StreamChatOptions,
+): Promise<string> {
+  const chunks: string[] = [];
+  try {
+    for await (const chunk of streamChatGenerator(credentials, options)) {
+      chunks.push(chunk);
+      options.onChunk?.(chunk);
+    }
+  } catch (e) {
+    options.onError?.(e as Error);
+    throw e;
   }
+  const fullText = chunks.join('');
+  options.onComplete?.(fullText);
+  return fullText;
 }

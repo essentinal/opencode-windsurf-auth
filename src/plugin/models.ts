@@ -899,6 +899,22 @@ export function isModelSupported(modelName: string): boolean {
   return normalized in MODEL_NAME_TO_ENUM;
 }
 
+/**
+ * Map from numeric enum value → protobuf string name (e.g. "MODEL_CLAUDE_3_5_SONNET_20241022").
+ * Used by the Cascade API's requested_model_uid field.
+ */
+const ENUM_TO_PROTO_NAME: Record<number, string> = Object.fromEntries(
+  Object.entries(ModelEnum).map(([k, v]) => [v as number, `MODEL_${k}`])
+);
+
+/**
+ * Convert a model enum value to its protobuf string name.
+ * e.g. 166 → "MODEL_CLAUDE_3_5_SONNET_20241022"
+ */
+export function enumToProtoName(enumValue: ModelEnumValue): string {
+  return ENUM_TO_PROTO_NAME[enumValue] ?? 'MODEL_CLAUDE_3_5_SONNET_20241022';
+}
+
 /** Default canonical model */
 export function getDefaultModel(): string {
   return 'claude-3.5-sonnet';
